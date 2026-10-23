@@ -493,7 +493,7 @@ Same reasoning. The obvious alternatives, `ping` and `check_running`, only confi
 
 Compose has special syntax for interpolating variables, and we use two forms for two different purposes:
 
-**Required** — `${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set — copy .env.example to .env}`
+**Required** — `${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - copy .env.example to .env}`
 
 The `:?` means: if this is missing or empty, **stop immediately**, print the variable name and that message, and create nothing.
 
@@ -841,6 +841,22 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-23 (later still) — ASCII-only in operator-facing error messages
+
+**What:** Changed the required-variable message form from `VAR is not set — copy .env.example to .env` (em dash) to `VAR is not set - copy .env.example to .env` (plain hyphen), in `contracts/environment-variables.md`, `tasks.md` (T008; T012 inherits it), `research.md`, and the example in Section 7 above.
+
+**Why:** the implementation was written with a hyphen and the documents specified an em dash, so the two disagreed. The hyphen is the better choice, so the documents changed rather than the code — with direct evidence from this session: a Python script run here failed with `UnicodeEncodeError: 'charmap' codec can't encode character`, which means this machine's console is on the **cp1252** code page, not UTF-8. A non-ASCII character in text printed to that console can come out as mojibake or a replacement glyph.
+
+An error message is the single worst place to risk unreadable characters: it is read exactly once, under pressure, by someone who already has a problem. So the rule recorded in the contract is narrow and specific — **prose in these documents may use em dashes freely; strings that reach a console may not.**
+
+**The general lesson, which is bigger than one hyphen.** When the implementation and the specification disagree, the reflex is to "fix" the implementation. That's backwards when the implementation is right. The question to ask is *which one is correct*, not *which one came second*. Here the code was correct and the document was wrong, so the document moved. What matters either way is that they stop disagreeing — because the next person reads the contract, writes em dashes, and the inconsistency propagates.
+
+**Rejected alternative:** change the three lines in `docker-compose.yml` to em dashes to match the contract. Equally consistent, and rejected because it would make the error message worse on the only machine this project currently runs on.
+
+**State now:** 8 of 44 tasks done (T007 and T008 complete, both verified — including watching the `:?` guard actually fire by commenting out `POSTGRES_DB`). The `postgres` service has an image, a network, a restart policy, and credentials; it still has no published port, no healthcheck, and no volume. The leftover `postgres:15` and `rabbitmq:3-management` containers from an earlier attempt are still running and still need clearing before T016 binds port 5432.
+
+---
 
 ### 2026-10-23 (later) — Ran `/speckit-analyze` and fixed what it found
 

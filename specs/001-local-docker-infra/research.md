@@ -91,7 +91,7 @@ Two consequences worth recording, because both silently break copied-from-the-in
 
 **Decision**: a two-tier interpolation scheme in the Compose file, with no `env_file:` directive.
 
-- Secret-bearing and identity values use required syntax: `${POSTGRES_PASSWORD:?missing in .env — copy .env.example to .env}`.
+- Secret-bearing and identity values use required syntax: `${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - copy .env.example to .env}`. The separator is a plain ASCII hyphen, not an em dash, because the message is printed to a terminal that may be running the cp1252 code page.
 - Published host ports use defaulted syntax: `${POSTGRES_PORT:-5432}`.
 
 **Rationale**: Compose automatically loads `.env` from the project directory for interpolation, so copying the example file is the only preparation step (FR-006). The `:?message` form makes Compose abort before starting anything, printing the variable name and the message — which is precisely the spec's edge case "the active configuration file is missing or incomplete: the developer is told which setting is missing and where the example file is, instead of getting an opaque authentication failure." The `:-default` form satisfies FR-004's overridability while keeping `5672`, `15672`, and `5432` as the defaults FR-002 and FR-003 name.

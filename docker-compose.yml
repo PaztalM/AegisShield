@@ -3,6 +3,16 @@
 # Exactly one Compose file: no version key, no override file, no profiles,
 # no include, and no container_name on any service. Every credential, name,
 # and host port is interpolated from .env (see .env.example).
+services:
+  postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is not set - copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is not set - copy .env.example to .env}
+    networks:
+      - aegisshield-net
+    restart: unless-stopped
 
 networks:
   aegisshield-net:

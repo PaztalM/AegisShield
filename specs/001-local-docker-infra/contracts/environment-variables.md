@@ -26,7 +26,9 @@ No other variable is read. No value from this table appears literally in `docker
 
 **Required** — declared in the Compose file as `${VAR:?<message>}`. If the variable is unset or empty, Compose aborts before creating any container and prints the variable name together with the message, which points at `.env.example`. Nothing starts partially.
 
-Message form: `VAR is not set — copy .env.example to .env`
+Message form: `VAR is not set - copy .env.example to .env`
+
+**ASCII only in this message, deliberately.** The separator is a plain hyphen, not an em dash, because this string is operator-facing error text printed to a terminal. Windows consoles commonly run the cp1252 code page rather than UTF-8 — verified on the development host for this feature — where a non-ASCII character can render as mojibake or a replacement glyph. An error message is the last place to risk that, so every one of the required-tier messages stays inside ASCII. Prose in these documents may use em dashes freely; strings that reach a console may not.
 
 **Defaulted** — declared as `${VAR:-<default>}`. Omitting it is legal and yields the default shown in the table. This is the mechanism FR-004 requires: a developer whose host already uses 5432 sets `POSTGRES_PORT=55432` in `.env` and never edits the Compose file.
 
