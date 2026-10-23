@@ -76,8 +76,8 @@ A developer stops the environment at the end of the day and starts it again the 
 ### Functional Requirements
 
 - **FR-001**: The environment MUST define exactly two infrastructure components — a message broker and a relational database — in a single environment definition at the repository root, startable with one command.
-- **FR-002**: The broker MUST publish its messaging endpoint on host port `5672` and its web management endpoint on host port `15672`.
-- **FR-003**: The database MUST publish its endpoint on host port `5432`.
+- **FR-002**: The broker MUST publish its messaging endpoint on host port `5672` and its web management endpoint on host port `15672` by default, each overridable per FR-004.
+- **FR-003**: The database MUST publish its endpoint on host port `5432` by default, overridable per FR-004.
 - **FR-004**: Each published host port MUST be overridable through configuration, so a developer whose host already uses one of these ports can relocate it without editing the environment definition.
 - **FR-005**: All credentials, database names, virtual host names, and port values MUST be supplied through environment variables, with no value hard-coded in the environment definition.
 - **FR-006**: A committed example configuration file MUST list every variable the environment reads, with working development defaults, so that copying it to the active configuration file is the only preparation step required before the first start.

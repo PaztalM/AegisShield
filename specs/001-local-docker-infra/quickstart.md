@@ -247,6 +247,81 @@ Append a throwaway service to a scratch copy of the Compose file that joins `aeg
 
 ---
 
+## Scenario 13 — Each component's logs are viewable on their own
+
+*Covers FR-016.*
+
+```bash
+docker compose logs rabbitmq | tail -5
+docker compose logs postgres | tail -5
+docker compose logs -f postgres    # follow mode; Ctrl+C to stop
+```
+
+**Expected**: each command returns only that component's output and never the other's. Both official images log to stdout, so no logging configuration is needed for this to work — the requirement is satisfied by the images plus Compose's standard log command, which is why no `logging:` block appears in the Compose file.
+
+---
+
+## Scenario 14 — Starting twice in a row is safe
+
+*Covers the "environment is started twice in a row" edge case.*
+
+```bash
+docker compose up -d --wait; echo "exit=$?"
+docker compose up -d --wait; echo "exit=$?"   # again, immediately
+docker compose ps
+docker volume ls | grep -E 'postgres-data|rabbitmq-data'
+```
+
+**Expected**: both runs exit `0`. `ps` lists exactly two containers — the second start is a no-op or a clean reconcile, not a second pair of containers. The same two volumes exist, unchanged; no data was discarded and nothing was duplicated.
+
+---
+
+## Scenario 15 — A full disk would be visible, not silent
+
+*Covers the "machine runs out of disk while the broker holds persistent messages" edge case, FR-016, FR-019.*
+
+RabbitMQ refuses to accept further publishes when free disk space falls below its `disk_free_limit`. The spec's requirement is that this is *visible through status or logs* rather than appearing as an unexplained hang, so what is verified here is the observability path, in the healthy state:
+
+```bash
+docker compose exec rabbitmq sh -c 'rabbitmq-diagnostics -q check_alarms; echo "exit=$?"'
+docker compose exec rabbitmq rabbitmq-diagnostics status | grep -iA2 'disk'
+docker compose logs rabbitmq | grep -i 'disk' || echo "(no disk alarm logged - expected when healthy)"
+```
+
+**Expected**: `check_alarms` exits `0` with no alarm in effect. `status` reports the configured `disk_free_limit` and the current free space, so the margin is inspectable before it becomes a problem. A raised alarm would appear in `docker compose logs rabbitmq` and would make `check_alarms` exit non-zero.
+
+**Actual disk exhaustion is deliberately not simulated.** Filling the host disk is destructive, and lowering the alarm threshold to make it reachable would mean a tenth environment variable and a configuration layer that nothing else needs — rejected under Principle V. Record the observed `disk_free_limit` in `README.md` beside the log command so a developer who hits the alarm knows immediately where to look.
+
+---
+
+## Scenario 16 — Recovery from an unclean shutdown
+
+*Covers the "unclean shutdown" edge case, FR-011, FR-019, FR-020.*
+
+The laptop-lid-closed case: processes are killed outright, with no chance to flush state or shut down gracefully.
+
+```bash
+# Write state first (as in Scenario 5)
+docker compose up -d --wait
+
+# Kill outright - SIGKILL, not a graceful stop
+docker compose kill
+docker compose ps        # containers exited, not stopped cleanly
+
+# Restart
+docker compose up -d --wait; echo "exit=$?"
+
+# Verify both recovered with no manual repair
+docker compose exec postgres sh -c   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT count(*) FROM quickstart_check;"'
+docker compose exec rabbitmq sh -c   'rabbitmqctl list_queues --vhost "$RABBITMQ_DEFAULT_VHOST" name durable'
+```
+
+**Expected**: exit `0`, both components back to `running (healthy)`, the row still present and the durable queue still declared — with **no manual repair of stored state**. PostgreSQL replays its write-ahead log on start and RabbitMQ recovers its Mnesia directory; neither needs intervention for a simple kill.
+
+If either cannot recover automatically, the spec permits the alternative but requires it be stated plainly: capture what `docker compose logs` reports and document the required reset in `README.md`. Silent corruption, or a hang with no explanation, is the failure this scenario exists to rule out.
+
+---
+
 ## Validation checklist
 
 | # | Scenario | Spec coverage |
@@ -263,5 +338,12 @@ Append a throwaway service to a scratch copy of the Compose file that joins `aeg
 | 10 | Images pinned | FR-013 |
 | 11 | Unhealthy never reported healthy | FR-019 |
 | 12 | Accepts a new service unchanged | FR-015, SC-010 |
+| 13 | Per-component logs | FR-016 |
+| 14 | Starting twice is safe | edge case: started twice |
+| 15 | Disk alarm is observable | edge case: out of disk; FR-016, FR-019 |
+| 16 | Unclean-shutdown recovery | edge case: unclean shutdown; FR-011, FR-019, FR-020 |
+
+Documentation requirements FR-017 and FR-018 are verified by review rather than by a scenario here: FR-017 by task T042 against this
+checklist's command list, and FR-018 by the fact that every command above runs inside a container or is `docker compose` itself.
 
 Not validated by command, by nature: SC-008 (a new contributor completes setup from the README alone in under 10 minutes) — validate by having someone who has not seen the project follow the README and time it.

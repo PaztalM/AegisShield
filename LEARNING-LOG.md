@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** the planning is complete and implementation has *just* started. Five of the 42 tasks are done — the configuration file and an empty skeleton of `docker-compose.yml` exist, but **neither RabbitMQ nor PostgreSQL is defined yet**, so there is still nothing to run. Section 10 states the exact position. Sections 1–9 explain the reasoning that got us here.
+> **The single most important thing to understand right now:** the planning is complete and implementation has *just* started. Six of the 44 tasks are done — the configuration file and an empty skeleton of `docker-compose.yml` exist, but **neither RabbitMQ nor PostgreSQL is defined yet**, so there is still nothing to run. Section 10 states the exact position. Sections 1–9 explain the reasoning that got us here.
 
 ---
 
@@ -243,7 +243,7 @@ Compare:
 
 The documents exist so that every decision has a recorded reason. `research.md` is the most valuable file in the project right now: it holds not just what we chose but **what we rejected and why**. That's Section 8.
 
-Also worth being blunt: this much documentation is heavy for a project this small. For a two-service learning project, writing a constitution, a spec, a plan, research notes, a data model, three contracts, a quickstart, and 42 tasks is more process than a professional team would use. You're doing it to *learn the discipline*. Once you've internalized it you'll know which parts to keep for a given project. Knowing when to skip a step is also engineering — but you have to learn the step before you earn the right to skip it.
+Also worth being blunt: this much documentation is heavy for a project this small. For a two-service learning project, writing a constitution, a spec, a plan, research notes, a data model, three contracts, a quickstart, and 44 tasks is more process than a professional team would use. You're doing it to *learn the discipline*. Once you've internalized it you'll know which parts to keep for a given project. Knowing when to skip a step is also engineering — but you have to learn the step before you earn the right to skip it.
 
 ---
 
@@ -287,7 +287,7 @@ Five files from `/speckit-plan`:
 
 ### Step 4 — Wrote the task list *(this conversation, NOT yet committed)*
 
-`specs/001-local-docker-infra/tasks.md` — **42 numbered tasks**, T001 through T042, grouped into six phases.
+`specs/001-local-docker-infra/tasks.md` — **44 numbered tasks**, T001 through T044, grouped into six phases.
 
 I read all seven documents above first, then derived the tasks from them. Each task names its exact file and quotes its constraints verbatim, so no decision gets re-made at implementation time.
 
@@ -300,7 +300,7 @@ The phases:
 | 3 — User Story 1 | T007–T020 | Both services defined and verified working. **This is the MVP.** |
 | 4 — User Story 2 | T021–T025 | The RabbitMQ web interface |
 | 5 — User Story 3 | T026–T032 | Volumes, data survival, the reset command |
-| 6 — Polish | T033–T042 | Edge cases, audits, final checks, update this log |
+| 6 — Polish | T033–T044 | Edge cases, audits, final checks, update this log |
 
 **MVP** = Minimum Viable Product: the smallest version that is genuinely useful. Here, finishing Phase 3 means you can start writing the Producer and Worker. Phases 4 and 5 make life nicer but you aren't blocked without them.
 
@@ -415,7 +415,7 @@ docker-compose.yml   ← the environment: 2 services, 1 network, 2 volumes
 README.md            ← the commands, the addresses, where credentials come from
 ```
 
-Three files. Forty-two tasks. That ratio is normal and worth internalizing: most of the tasks are *verification*, not writing. Writing the file is quick; proving it behaves correctly under restart, reset, port conflicts, missing config, and a frozen process is the actual work.
+Three files. Forty-four tasks. That ratio is normal and worth internalizing: most of the tasks are *verification*, not writing. Writing the file is quick; proving it behaves correctly under restart, reset, port conflicts, missing config, and a frozen process is the actual work.
 
 ### The three user stories
 
@@ -664,20 +664,20 @@ AegisShield/
     ├── quickstart.md                  ← NOT committed; 12 verification scenarios
     ├── contracts/                     ← NOT committed; variables, endpoints, commands
     ├── checklists/requirements.md     ← spec quality checklist
-    └── tasks.md                       ← NOT committed; the 42 numbered tasks
+    └── tasks.md                       ← the 44 numbered tasks
 ```
 
-### Task progress: 5 of 42 done
+### Task progress: 6 of 44 done
 
 | Task | Status | Result |
 |---|---|---|
 | T001 Verify Docker works | ✅ `[X]` | — |
 | T002 Verify image tags still exist | ✅ `[X]` | — |
-| T003 Verify `.gitignore` ignores `.env` | ⬜ not ticked | Already true — I confirmed it: `.gitignore:2:.env` |
+| T003 Verify `.gitignore` ignores `.env` | ✅ `[X]` | Already true; ticked after I confirmed `.gitignore:2:.env` |
 | T004 Create `.env.example` | ✅ `[X]` | All 9 variables present, with comments |
 | T005 Create `docker-compose.yml` skeleton | ✅ `[X]` | Network + 2 volumes. **No services.** |
 | T006 Copy `.env.example` → `.env` | ✅ `[X]` | Done, and correctly ignored by Git |
-| T007–T042 | ⬜ | Not started |
+| T007–T044 | ⬜ | Not started |
 
 ### What this means in practice
 
@@ -715,7 +715,7 @@ Committing is worth doing soon. See Section 11.
 
 ### Immediately
 
-**`/speckit-implement`** — picks up the list where it stands (next unticked task: T003, then the real work at T007) and runs through to T042. The substance of what remains: add the `postgres` and `rabbitmq` service definitions to the skeleton in `docker-compose.yml`, write `README.md`, then verify the whole thing against the 12 scenarios in `quickstart.md`.
+**`/speckit-implement`** — picks up the list where it stands (next unticked task: T003, then the real work at T007) and runs through to T044. The substance of what remains: add the `postgres` and `rabbitmq` service definitions to the skeleton in `docker-compose.yml`, write `README.md`, then verify the whole thing against the 12 scenarios in `quickstart.md`.
 
 Two things you could reasonably do first:
 
@@ -842,6 +842,59 @@ Alphabetical, for when a term shows up and you've forgotten it.
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
 
+### 2026-10-23 (later) — Ran `/speckit-analyze` and fixed what it found
+
+**What:** Analysed `spec.md`, `plan.md`, and `tasks.md` against each other and against the constitution, then applied every remediation. No CRITICAL issues; one HIGH, four MEDIUM, four LOW.
+
+**What "analyse" means here:** a read-only cross-check for four kinds of defect that only show up when you compare documents rather than read them one at a time:
+
+- **Coverage gaps** — a requirement with no task to satisfy it. The requirement silently never gets built.
+- **Underspecification** — a task that tells you to do something without saying what value to use. The implementer invents one, and nobody later knows whether it was reasoned or guessed.
+- **Inconsistency** — two documents that contradict each other, so following one breaks the other.
+- **Constitution conflict** — anything that violates a MUST principle. Automatically critical.
+
+**The HIGH finding, and why it mattered most.** Tasks T010 and T014 said to set healthcheck `interval`, `timeout`, `retries`, and `start_period` — but **no document gave a single number.** Eight values would have been invented at the keyboard. That's bad for a specific reason: SC-002 requires a warm start under 60 seconds, and those numbers *determine* whether it passes. You would have been tuning a measurement against a target you'd made up minutes earlier, with no record of why. Concrete values now live in `data-model.md`, quoted verbatim by both tasks:
+
+| | postgres | rabbitmq |
+|---|---|---|
+| `interval` | 5s | 10s |
+| `timeout` | 5s | 10s |
+| `retries` | 5 | 6 |
+| `start_period` | 30s | 60s |
+
+**Why the broker's are all larger:** an Erlang node boot plus management-plugin start commonly takes 20–40s on a first start, and `rabbitmq-diagnostics` launches a short-lived Erlang VM on every invocation, so it needs a timeout that `pg_isready` — one cheap connection attempt — does not.
+
+**And the non-obvious bit worth knowing:** a longer `start_period` does **not** delay anything. If a check succeeds during that window, Docker marks the service healthy immediately. `start_period` only suppresses *failures* from counting while the service is still booting. So the broker's 60s window costs nothing against SC-002 — which is exactly why it was safe to set it generously. If you believed `start_period` was a mandatory wait, you'd have set it too low and reintroduced false failures on slow machines.
+
+**The coverage gaps.** Three of the spec's eight edge cases had no task and no scenario — not deferred, just missing:
+
+| Edge case | Fix |
+|---|---|
+| Logs viewable per component (FR-016) | Only *documented*, never run. Added as an assertion in T016 and quickstart Scenario 13 |
+| Started twice in a row | Added to T016 and Scenario 14 |
+| Machine runs out of disk | New task **T040** + Scenario 15 |
+| Unclean shutdown (lid closed, forced kill) | New task **T041** + Scenario 16 |
+
+**A judgment call on the disk one, stated openly.** The spec requires that a full disk be *visible through status or logs* rather than appearing as an unexplained hang. It does not require preventing it. Genuinely filling the host disk is destructive, and lowering RabbitMQ's alarm threshold to make it reachable would need a tenth environment variable and a config layer — rejected under Principle V. So T040 verifies the **observability path** in the healthy state: `rabbitmq-diagnostics check_alarms` exits zero, `status` reports the current `disk_free_limit` and free space, and the logs are where a raised alarm appears. The limitation is written into the task rather than left implicit.
+
+This is a pattern worth copying: **when you can't fully test a requirement, test the part you can and write down exactly which part you didn't.** An undocumented gap looks identical to an oversight.
+
+**The inconsistencies.** FR-002 said the broker **MUST** publish on 5672/15672; FR-004 said every port **MUST** be overridable. Read literally, satisfying one broke the other — the Assumptions section resolved it, but only if you read that far. FR-002 and FR-003 now say "by default … overridable per FR-004". Wording only; the design was always right. Separately, T003 was unticked while T004–T006 were ticked, violating tasks.md's own stated dependency order. Its condition was verified true (`.gitignore:2`), so it's now ticked.
+
+**Renumbering, and why I bothered.** Inserting two tasks meant old T040–T042 became T042–T044. I could have appended the new tasks as T043/T044 instead and skipped the churn — but then the learning-log task would have run *before* two verifications whose results it's supposed to record, and task IDs would no longer match execution order. A numbering scheme that doesn't mean anything is worse than no scheme, because people still trust it.
+
+**Files changed:** `spec.md` (FR-002, FR-003), `data-model.md` (two readiness-timing rows), `research.md` (the SC-002 risk marked resolved), `tasks.md` (T003 ticked, T010/T014 given values, T016 extended, T040/T041 added, tail renumbered), `quickstart.md` (Scenarios 13–16, coverage table now cites all 20 FRs), `plan.md` (T044 reference), and this file.
+
+**Rejected alternatives:**
+
+- *Leave the healthcheck values to implementation.* Rejected — that's precisely how an unexamined number ends up load-bearing for a success criterion.
+- *Drop the three uncovered edge cases from the spec.* Rejected — they're real (a closed laptop lid is not exotic). Deleting a requirement to make coverage look complete is the worst available option.
+- *Add tasks without matching quickstart scenarios.* Rejected — T043 runs the quickstart checklist end to end, so a task with no scenario would never actually be exercised by the final validation pass.
+
+**State now:** planning complete and internally consistent; **6 of 44 tasks done**; still no services defined in `docker-compose.yml`, so still nothing to run. Coverage: 20/20 FRs, 10/10 SCs, 8/8 edge cases.
+
+---
+
 ### 2026-10-23 — This document, and constitution 1.1.0
 
 **What:** Created `LEARNING-LOG.md` (everything above). Amended the constitution from 1.0.0 to **1.1.0**, adding **Principle VI — Explain the Work in Plain Language**, which makes maintaining this file a requirement rather than a nice idea.
@@ -854,7 +907,7 @@ Newest first. Each entry is one unit of work, as Principle VI requires.
 |---|---|
 | `.specify/memory/constitution.md` | Principle VI added; workflow gate added; "Principles I–V" → "I–VI"; version 1.0.0 → 1.1.0 with an amendment-history entry |
 | `specs/001-local-docker-infra/plan.md` | Constitution Check table gained a sixth row; `LEARNING-LOG.md` added to the file listing |
-| `specs/001-local-docker-infra/tasks.md` | New task **T042** — update this log after implementation (41 → 42 tasks) |
+| `specs/001-local-docker-infra/tasks.md` | New task **T042** — update this log after implementation (41 → 42 tasks). *Later renumbered to T044 by the analysis entry above.* |
 
 **Why MINOR and not PATCH or MAJOR:** semantic versioning — a *new* principle is added material (MINOR). No existing principle changed meaning, so it isn't MAJOR. It's more than a typo fix, so it isn't PATCH.
 
@@ -869,7 +922,7 @@ Newest first. Each entry is one unit of work, as Principle VI requires.
 
 The lesson is worth keeping, because it's a mistake with a general shape: **I described the project state from memory of what I had written, instead of checking the disk.** Documentation drifts from reality the moment reality moves. The fix is mechanical — look before you write, and prefer a command's output (`docker compose config`, `git status`) over your recollection.
 
-**State now:** planning complete; 5 of 42 tasks done; no services defined yet; nothing committed since the planning phase.
+**State as of that entry:** planning complete; 5 of 42 tasks done; no services defined yet; nothing committed since the planning phase.
 
 ---
 

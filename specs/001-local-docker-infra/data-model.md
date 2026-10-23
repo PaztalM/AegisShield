@@ -42,6 +42,7 @@ The single declarative description of the local stack. One instance: `docker-com
 | Virtual host | `RABBITMQ_DEFAULT_VHOST` | Created on first start |
 | Volume mount | `rabbitmq-data` → `/var/lib/rabbitmq` | Holds durable definitions and persistent messages (FR-011, FR-020) |
 | Readiness check | `rabbitmq-diagnostics -q check_port_connectivity` | Must verify the listener accepts connections, not that the process started (FR-010) |
+| Readiness timing | `interval: 10s`, `timeout: 10s`, `retries: 6`, `start_period: 60s` | Authoritative values — do not leave to implementation-time discretion. Longer than the database's on every axis: an Erlang node boot plus management-plugin start commonly takes 20–40s on a first start, and `rabbitmq-diagnostics` itself starts a short-lived Erlang VM per invocation, so it needs a timeout `pg_isready` does not. A success during `start_period` marks the service healthy immediately, so the 60s window delays nothing — it only stops a slow first boot being reported as failure (FR-010, FR-019, SC-002) |
 | Restart policy | `unless-stopped` | Survives a host or daemon restart without starting after a deliberate stop |
 
 **State transitions** (as reported by `docker compose ps`):
@@ -78,6 +79,7 @@ absent ──up──> created ──> starting (healthcheck failing, within sta
 | Application database | `POSTGRES_DB` | Created empty on first start, no manual step and no init script (FR-009) |
 | Volume mount | `postgres-data` → `/var/lib/postgresql/data` | The data directory (FR-011) |
 | Readiness check | `pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"` | `-h 127.0.0.1` is required: a socket-only check passes during initialization, before the TCP listener exists (FR-010) |
+| Readiness timing | `interval: 5s`, `timeout: 5s`, `retries: 5`, `start_period: 30s` | Authoritative values — do not leave to implementation-time discretion. `pg_isready` is a cheap single connection attempt, so a 5s interval costs nothing and keeps detection granularity tight for SC-002's 60s warm start. `start_period: 30s` covers first-start `initdb`, which takes 10–20s; after it elapses, 5 failed checks at 5s mark the service unhealthy within ~25s (FR-010, FR-019, SC-002) |
 | Restart policy | `unless-stopped` | As above |
 | Schema | none | Tables and constraints belong to versioned migrations in a later feature (Principle III) |
 
