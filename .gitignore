@@ -1,0 +1,16 @@
+# Environment variables (CRITICAL: Prevents secret leaks)
+.env
+
+# Python virtual environments and caches
+venv/
+env/
+__pycache__/
+*.pyc
+
+# IDEs and OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Docker volumes/data (if mapped locally outside of Docker managed volumes)
+data/
