@@ -1,0 +1,13 @@
+# AegisShield — local development environment.
+#
+# Exactly one Compose file: no version key, no override file, no profiles,
+# no include, and no container_name on any service. Every credential, name,
+# and host port is interpolated from .env (see .env.example).
+
+networks:
+  aegisshield-net:
+    driver: bridge
+
+volumes:
+  rabbitmq-data:
+  postgres-data:

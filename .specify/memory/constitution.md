@@ -82,6 +82,34 @@ identical.
 Rationale: abstractions are cheapest to add once real duplication exists and most expensive to
 remove once they are wrong.
 
+### VI. Explain the Work in Plain Language
+
+This project is a learning project. Working software is only half the deliverable; the other half
+is the maintainer understanding why it works the way it does.
+
+- A single running log MUST be kept at `LEARNING-LOG.md` in the repository root.
+- After any meaningful unit of work — a ratified constitution change, a new spec, a plan, a task
+  list, an implemented feature, or any significant technical decision — that file MUST be updated
+  (or created, if absent) in the same change.
+- Each entry MUST cover, in plain language: **what** was done, **why** it was done, **what
+  alternatives were rejected and why**, and **what state the project is now in**.
+- Entries MUST assume no prior knowledge. Every term is defined at first use, including terms an
+  experienced engineer would consider obvious. "Trivial" is not a reason to omit an explanation;
+  it is a reason the explanation will be short.
+- Entries MUST state plainly what does NOT yet exist or work, so planning output is never mistaken
+  for a running system.
+- The log MUST record accepted risks and trade-offs together with the condition under which they
+  should be revisited, rather than leaving them implicit in the design documents.
+- The log is a teaching document, not a changelog. Git history already records what changed; this
+  file records the reasoning a future reader cannot reconstruct from a diff.
+- An entry that its intended reader cannot follow is a defect in the entry and MUST be rewritten
+  on request.
+
+Rationale: the reasoning behind a decision is the most valuable and most perishable artifact in a
+project. It is absent from the code, absent from the diff, and gone from memory within weeks.
+Recording it in plain language is what makes the difference between maintaining a system and
+merely possessing it — and between engineering a system and having prompted one into existence.
+
 ## Technology Stack & Constraints
 
 - **Language**: Python 3 for all application services. The exact minor version is pinned once in
@@ -102,7 +130,9 @@ constitution amendment.
 ## Development Workflow & Quality Gates
 
 - Every feature follows the Spec Kit flow: specify → plan → tasks → implement. The plan MUST
-  include a Constitution Check against Principles I–V before implementation begins.
+  include a Constitution Check against Principles I–VI before implementation begins.
+- No unit of work is complete until `LEARNING-LOG.md` has been updated for it (Principle VI). This
+  applies to documentation-only work, including specs, plans, and task lists.
 - Fraud-detection rules MUST have unit tests covering both flagged and non-flagged cases.
 - The Producer → RabbitMQ → Worker → PostgreSQL path MUST have at least one integration test that
   runs against the real services in Docker Compose (no mocking of the broker or database in that
@@ -126,4 +156,12 @@ constitution amendment.
   MUST be recorded with justification in the plan's Complexity Tracking section, or the change
   is rejected.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-23
+**Version**: 1.1.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-23
+
+**Amendment history**:
+
+- **1.1.0** (2026-10-23) — Added Principle VI (Explain the Work in Plain Language) and the
+  corresponding workflow gate, requiring `LEARNING-LOG.md` to be updated with every unit of work.
+  MINOR bump: a new principle was added, no existing principle was changed or removed. Migration
+  impact: none on existing services (there are none yet); the Constitution Check table in every
+  plan now carries a sixth row.
