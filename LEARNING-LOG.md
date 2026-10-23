@@ -649,65 +649,71 @@ Verified: `.env` is ignored by root line 2; `.specify/feature.json` is ignored b
 ```
 AegisShield/
 ├── .gitignore                         ← committed; already ignores .env
-├── .env.example                       ← NOT committed yet; all 9 variables, done (T004)
-├── .env                               ← NEVER committed; your copy, done (T006)
-├── docker-compose.yml                 ← NOT committed yet; SKELETON ONLY (T005)
+├── .env.example                       ← committed; all 9 variables (T004)
+├── .env                               ← NEVER committed; your copy (T006)
+├── docker-compose.yml                 ← committed; both services, complete for US1
+├── README.md                          ← committed; operator documentation (T019)
 ├── LEARNING-LOG.md                    ← this file
 ├── .specify/
 │   ├── .gitignore                     ← committed; Spec Kit's own local state
-│   └── memory/constitution.md         ← modified, not committed; now 6 principles
+│   └── memory/constitution.md         ← committed; 6 principles
 └── specs/001-local-docker-infra/
     ├── spec.md                        ← committed; WHAT the feature must do
-    ├── plan.md                        ← NOT committed; HOW we'll do it
-    ├── research.md                    ← NOT committed; decisions + rejected options
-    ├── data-model.md                  ← NOT committed; exact field values
-    ├── quickstart.md                  ← NOT committed; 12 verification scenarios
-    ├── contracts/                     ← NOT committed; variables, endpoints, commands
-    ├── checklists/requirements.md     ← spec quality checklist
-    └── tasks.md                       ← the 44 numbered tasks
+    ├── plan.md                        ← committed; HOW we'll do it
+    ├── research.md                    ← committed; decisions + rejected options
+    ├── data-model.md                  ← committed; exact field values
+    ├── quickstart.md                  ← committed; 12 verification scenarios
+    ├── contracts/                     ← committed; variables, endpoints, commands
+    ├── checklists/requirements.md     ← committed; spec quality checklist
+    └── tasks.md                       ← committed; the 44 numbered tasks
 ```
 
-### Task progress: 6 of 44 done
+### Task progress: 20 of 44 done
 
-| Task | Status | Result |
+| Phase | Tasks | Status |
 |---|---|---|
-| T001 Verify Docker works | ✅ `[X]` | — |
-| T002 Verify image tags still exist | ✅ `[X]` | — |
-| T003 Verify `.gitignore` ignores `.env` | ✅ `[X]` | Already true; ticked after I confirmed `.gitignore:2:.env` |
-| T004 Create `.env.example` | ✅ `[X]` | All 9 variables present, with comments |
-| T005 Create `docker-compose.yml` skeleton | ✅ `[X]` | Network + 2 volumes. **No services.** |
-| T006 Copy `.env.example` → `.env` | ✅ `[X]` | Done, and correctly ignored by Git |
-| T007–T044 | ⬜ | Not started |
+| 1 — Setup | T001–T003 | ✅ complete |
+| 2 — Foundational | T004–T006 | ✅ complete |
+| 3 — User Story 1: one-command start 🎯 MVP | T007–T020 | ✅ complete |
+| 4 — User Story 2: management interface | T021–T025 | ⬜ not started |
+| 5 — User Story 3: data across restarts | T026–T032 | ⬜ not started |
+| 6 — Polish & cross-cutting | T033–T044 | ⬜ not started |
 
 ### What this means in practice
 
-`docker-compose.yml` exists, but it is a **skeleton**: it declares the network and the two volumes and nothing else. I checked what Compose makes of it:
+The MVP is real. One command brings up the whole environment, and it does not report ready until both components actually accept connections:
 
 ```
-$ docker compose config
-name: aegisshield
-services: {}
+$ docker compose up -d --wait
+$ docker compose ps
+NAME                     SERVICE    STATUS                  PORTS
+aegisshield-postgres-1   postgres   Up (healthy)            0.0.0.0:5432->5432/tcp
+aegisshield-rabbitmq-1   rabbitmq   Up (healthy)            0.0.0.0:5672->5672/tcp
 ```
 
-`services: {}` means **zero services**. So `docker compose up` would start nothing — there is no RabbitMQ and no PostgreSQL yet. Those arrive in Phase 3, tasks T007–T014.
+Both components were then verified by doing real work rather than by trusting the word "healthy": a `psql` query confirmed the named database and its owning account were created on first start with no init script (T018), and a durable queue was declared and listed through the broker's own tooling (T017).
 
-This is exactly what Phase 2 was supposed to produce, so nothing is wrong. But it's worth seeing clearly, because "the file exists" and "the thing works" are very different statements, and `docker compose config` is how you tell them apart. Get in the habit of asking a tool what it actually sees rather than trusting that a file's presence means it's doing something.
+Three things are deliberately still absent, and each is a task rather than an oversight:
+
+- **No management port.** The web interface at `localhost:15672` is documented in `README.md` but not yet published — T021.
+- **No volume mounts.** Both services currently write into anonymous volumes that Docker invents on the fly, so data survives by accident rather than by design — T026 and T027.
+- **No fixed broker `hostname:`.** Today's node name was `rabbit@a339da951fd6`, derived from a random container hostname. Durable queues will appear to vanish across a restart until T028 pins it.
 
 ### Files that still do NOT exist
 
 ```
-README.md            ← the documentation task, T019
 producer/            ← a whole future feature
 worker/              ← a whole future feature
 ```
 
-### Nothing is committed since the planning phase
+### Everything is committed and pushed
 
-`git status` shows the constitution as modified and everything else — `.env.example`, `docker-compose.yml`, this file, and all six planning documents — as **untracked**. Untracked means Git is not recording them: if you deleted one, Git could not get it back.
+Two commits today, both on `dev` and pushed to `origin`:
 
-`.env` is the exception and is correctly absent from that list, because `.gitignore` hides it. That's T003 working, which is why I was able to confirm T003 above without changing anything.
+- `369d213` — the `postgres` service (T007, T008)
+- `99ca09a` — the broker service and operator docs (T009–T019)
 
-Committing is worth doing soon. See Section 11.
+`.env` is correctly absent from both, because `.gitignore` hides it. That is T003 still working.
 
 ---
 
@@ -715,12 +721,11 @@ Committing is worth doing soon. See Section 11.
 
 ### Immediately
 
-**`/speckit-implement`** — picks up the list where it stands (next unticked task: T003, then the real work at T007) and runs through to T044. The substance of what remains: add the `postgres` and `rabbitmq` service definitions to the skeleton in `docker-compose.yml`, write `README.md`, then verify the whole thing against the 12 scenarios in `quickstart.md`.
+**T021** is the next unticked task: publish the broker's management port as `"${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"`, which opens the web interface and begins User Story 2. The image is already the `-management-alpine` variant, chosen back in T011 precisely so that this story needs a port mapping and nothing else — no custom image, no plugin-enable step.
 
-Two things you could reasonably do first:
+User Story 2 then continues with a restart (T022), hand administration through the interface (T023), and confirming that signing in as `guest` is rejected (T024) — which today's `Not_Authorized` result has already most of the way proven.
 
-- **`/speckit-analyze`** — cross-checks spec, plan, and tasks for contradictions and gaps before you build on them. Cheap insurance; a contradiction found now is far cheaper than one found at T030.
-- **Commit the planning documents.** Right now `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, `contracts/`, and `tasks.md` are untracked — meaning they exist only on your disk, unprotected by Git history. Committing them is a natural checkpoint: the planning phase is done, record it before implementation starts mixing new changes in.
+After that, User Story 3 is the one with real substance left in it: the two named volume mounts and the fixed broker `hostname:`, followed by the five-cycle restart test that proves data actually survives.
 
 ### After this feature
 
@@ -841,6 +846,67 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-23 (end of day) — User Story 1 is finished and measured
+
+**What:** Implemented T009–T019 and measured T020. The environment now starts with one command, both components report healthy before that command returns, and `README.md` documents how to operate it. Everything is committed and pushed — `99ca09a` on `dev`, the first commit since the planning phase.
+
+**The measurements (T020).** Two runs on this machine (Windows 10, Docker Desktop):
+
+| Run | Budget | Measured | Headroom |
+|---|---|---|---|
+| Cold — images deleted, volumes discarded (SC-001) | under 5 min | **50.5s** | 83% |
+| Warm — images cached, volumes kept (SC-002) | under 60s | **14.5s** | 76% |
+
+Per container, as Compose reported them:
+
+| | cold | warm |
+|---|---|---|
+| `postgres` healthy | 8.4s | 6.1s |
+| `rabbitmq` healthy | 16.4s | 14.1s |
+
+**What those numbers actually tell us.** Four things, and none of them was obvious before measuring.
+
+1. **The cold run was mostly downloading.** The two image pulls took 33.5s and 23.3s, concurrently, so roughly two thirds of the 50.5s was network. That is a property of the internet connection, not of anything we wrote — which is exactly why SC-001's budget is generous and SC-002's is the one that measures our own choices.
+
+2. **`initdb` is far cheaper here than `research.md` predicted.** postgres reached healthy at 8.4s cold (including creating the account, the database, and the data directory) and 6.1s warm. So first-time initialization cost about **2 seconds**, not the 10–20s that section 2 of `research.md` assumed. `start_period: 30s` is therefore very generous — and it stays. An over-generous grace period costs nothing, because a healthcheck that succeeds inside it marks the service healthy immediately. `start_period` is not a delay; it is suspended judgment.
+
+3. **RabbitMQ is the critical path, and the reason is visible in its number.** It was healthy at 14.1s warm, with `interval: 10s`. Docker waits one full interval before the *first* probe, so the earliest possible answer was 10s — and the probe then took about 4 more seconds to come back. Those 4 seconds are `rabbitmq-diagnostics` booting a short-lived Erlang VM, precisely what Decision 2 claimed when it gave the broker a `timeout` that the database does not need. A prediction written during planning turned up in the measurement, which is most of the reason for writing predictions down.
+
+4. **`interval` sets the floor on how fast a service can be called ready** — not `start_period`, not `retries`. postgres cannot be reported healthy before ~5s and rabbitmq not before ~10s, however fast they actually start.
+
+**The tuning decision, which was not to tune.** T020 says that if the warm start exceeds 60 seconds, change the healthcheck timings rather than relax the criterion. It didn't — 14.5s against a 60s budget.
+
+A tempting change was still available: drop rabbitmq's `interval` to 5s and the warm start would likely fall to about 9s. Rejected. It would double how often a 4-second Erlang VM spawn runs, forever, on every developer's machine, to win five seconds nobody is waiting for — and it would mean editing `data-model.md`'s authoritative values with no requirement asking for it. **Headroom is not a budget to be spent.** The values stand unchanged.
+
+**A Windows lesson that cost real time: PowerShell mangles nested quotes.** Every `docker compose exec` command in `quickstart.md` has the shape `sh -c 'psql -U "$POSTGRES_USER" ... -c "SELECT ..."'`. Windows PowerShell 5.1 wraps that whole argument in double quotes when handing it to `docker.exe`, but does **not** escape the double quotes already inside it — so the argument reaches the container in pieces. The failure mode is quiet and misleading: psql ran, reported `(1 row)`, and printed nothing useful, because the query that arrived was not the query that was typed. `--%` does not rescue it.
+
+Two forms that do work, both verified:
+
+```bash
+# Git Bash — the quickstart.md commands run verbatim
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT current_database(), current_user;"'
+```
+
+```powershell
+# PowerShell — outer double quotes, inner single quotes, backtick before every $
+docker compose exec postgres sh -c "psql -U `$POSTGRES_USER -d `$POSTGRES_DB -Atc 'SELECT current_database(), current_user;'"
+```
+
+The backtick is PowerShell's escape character; it stops PowerShell expanding the variable so the literal `$POSTGRES_USER` reaches the container's shell, which is the only place the value exists. The general lesson is bigger than the syntax: **when a command "runs" but produces nothing, suspect that your shell rewrote it before the program ever saw it.** Echo the argument and look at it.
+
+**Two Compose details worth keeping.**
+
+- **`$$` is Compose's escape for a literal `$`.** The postgres healthcheck must read `pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER"`. A single `$` is expanded by *Compose* at parse time, baking the value into the command string; `$$` leaves the expansion to the container's shell at check time, where `.env`'s values actually live. `docker compose config` tells you which happened: `$$POSTGRES_USER` in the output is right, `aegis` is wrong.
+- **Indentation decides what a key *is*.** The `rabbitmq:` block was first written at column 0, which made it a top-level key beside `services:` instead of a service inside it. Compose rejected it with `additional properties 'rabbitmq' not allowed` — an error about the shape of the whole document, which never mentions whitespace. The four lines of content were correct; only the leading spaces were wrong. Compare a new block against a working sibling before reading anything else.
+
+**`guest` is genuinely absent, confirmed from the outside.** Running T017's `rabbitmqadmin declare queue` *without* `-u`/`-p` falls back to its default login, `guest`, and returns `Not_Authorized` with exit 64. That is Decision 9 proven: `guest` is not disabled or restricted, it was never created, because `RABBITMQ_DEFAULT_USER` was set before the volume initialized. Most of acceptance scenario 2.4 is therefore already established, ahead of T024.
+
+**One known gap, deliberately accepted.** `README.md` documents three endpoints, including the management interface at `localhost:15672` — but T021 has not published that port yet, so the README currently describes one endpoint the Compose file does not expose. T019 explicitly requires all three endpoints, and T021 closes the gap tomorrow. Better written down than discovered.
+
+**State now:** 20 of 44 tasks done; User Story 1 complete. `docker compose up -d --wait` brings up a healthy broker and a healthy database, both reachable from the host, documented by a README covering the five operator commands, the three endpoints and their override variables, and the credential-freeze reset path. Still missing: the management port (T021), the two named volume mounts (T026, T027), and the fixed broker `hostname:` (T028) — without which durable queues appear to vanish across a restart, as today's random node name `rabbit@a339da951fd6` shows plainly.
+
+---
 
 ### 2026-10-23 (later still) — ASCII-only in operator-facing error messages
 
