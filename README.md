@@ -98,9 +98,32 @@ internal name whatever you publish locally.
 
 ### If a port is already in use
 
-The start fails immediately, naming the occupied port, and leaves nothing half-running. Set the
-corresponding variable in `.env` — for example `POSTGRES_PORT=55432` — and start again. Do not edit
-`docker-compose.yml`; the override exists precisely so you never have to.
+The start fails in about two seconds and names the port:
+
+```text
+Bind for 0.0.0.0:5432 failed: port is already allocated
+```
+
+To relocate it, set the corresponding variable in `.env` — for example `POSTGRES_PORT=55432` — and
+start again. The variable is already in the file, so change that line rather than adding a second
+one. Do not edit `docker-compose.yml`; the override exists precisely so you never have to. Only the
+host side moves; inside the container network the address stays `postgres:5432`.
+
+**Always run `docker compose down` before retrying a failed start.** This matters more than it
+sounds. A failed start leaves one container created but never started, and Docker programs a
+container's published ports when it is *created*, not when it is started. So if you clear the
+conflict and simply run `docker compose up -d --wait` again, the command exits `0` and
+`docker compose ps` reports the service **healthy** — while its port is not published and nothing on
+your host can reach it. The healthcheck cannot catch this, because it runs *inside* the container,
+where the database is genuinely fine.
+
+If you suspect you are in that state, `docker port aegisshield-postgres-1` prints nothing. The cure
+is the same either way:
+
+```bash
+docker compose down
+docker compose up -d --wait
+```
 
 ## Broker management interface
 

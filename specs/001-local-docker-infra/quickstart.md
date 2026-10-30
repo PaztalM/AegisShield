@@ -161,17 +161,24 @@ docker compose down
 time docker compose up -d --wait; echo "exit=$?"
 ```
 
-**Expected**: non-zero exit within 10 seconds, with an error message naming the occupied host port. No component is left partially started — confirm with `docker compose ps`.
+**Expected**: non-zero exit in about 2 seconds, well inside SC-009's 10, with an error naming the occupied host port — `Bind for 0.0.0.0:5432 failed: port is already allocated`.
 
-Then prove the override path:
+**Occupy the port with Docker, not a bare socket.** `docker run -d --name portsquat --entrypoint sleep -p 5432:5432 postgres:18.4-alpine 300` works because Docker's own allocator refuses a duplicate host port. A .NET/PowerShell `TcpListener` does **not** work on Windows: the OS allows a second socket to bind an address already in use unless the first set `SO_EXCLUSIVEADDRUSE`, so the start succeeds and the test silently proves nothing.
+
+**`docker compose ps` will show a partial start, and that is expected.** The broker is left `running (healthy)` while the database sits in `Created` with no ports. Compose creates all containers and then starts them, so a component whose port is free comes up before the conflicted one fails. The spec accepts this.
+
+**Recover with `docker compose down` before starting again — not a bare `up`.** Clearing the conflict and re-running `up -d --wait` exits `0` and reports the database `healthy` while **leaving it unpublished and unreachable from the host**: Docker programs external connectivity when a container is created, not when an existing one is started, so the leftover `Created` container starts without its port binding. `docker port <container>` is empty and `NetworkSettings.Ports` is `{"5432/tcp":[]}` while `HostConfig.PortBindings` still says `5432`. The in-container healthcheck cannot see this, because `pg_isready -h 127.0.0.1` runs inside the container. A second `up -d --wait` happens to fix it; `down` first fixes it in one deterministic step.
+
+Then prove the override path by changing the existing `POSTGRES_PORT` line in `.env` to `55432` — **edit it, do not append**, since `.env` is a copy of `.env.example` and already declares the variable, and a duplicate key would leave which value wins up to dotenv precedence:
 
 ```bash
-echo 'POSTGRES_PORT=55432' >> .env
+docker compose down
 docker compose up -d --wait; echo "exit=$?"
 docker compose ps
+docker port aegisshield-postgres-1
 ```
 
-**Expected**: `exit=0`; `ps` shows the database published on `55432`. The Compose file was not edited (FR-004). Remove the line afterwards.
+**Expected**: `exit=0`; `ps` and `docker port` both show the database published on `55432`, with the container side still `5432`. Check `docker port` and not only `ps`, for the reason above. The Compose file was not edited (FR-004). Restore the line to `5432` afterwards, then `down` and start again.
 
 ---
 

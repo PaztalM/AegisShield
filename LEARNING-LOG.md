@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** 35 of the 45 tasks are done, and all three user stories are complete and verified. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and data now provably survives a restart — measured over five stop/start cycles, with the reset path measured over five more. What is left is Phase 6: edge cases, audits, a re-measurement of the timings, and the final review. Section 10 states the exact position. Sections 1–9 explain the reasoning that got us here.
+> **The single most important thing to understand right now:** 36 of the 45 tasks are done, and all three user stories are complete and verified. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and data provably survives a restart while `down -v` provably discards it. What is left is Phase 6: five more edge cases, a re-measurement of the timings, and the final review. One thing to know before you use this environment: **after a failed start, always `docker compose down` before retrying** — a bare retry can report a service healthy while its port is unpublished and unreachable from your host (see the T036 entry). Sections 1–9 explain the reasoning that got us here.
 
 ---
 
@@ -668,7 +668,7 @@ AegisShield/
     └── tasks.md                       ← committed; the 45 numbered tasks
 ```
 
-### Task progress: 35 of 45 done
+### Task progress: 36 of 45 done
 
 | Phase | Tasks | Status |
 |---|---|---|
@@ -677,7 +677,7 @@ AegisShield/
 | 3 — User Story 1: one-command start 🎯 MVP | T007–T020 | ✅ complete |
 | 4 — User Story 2: management interface | T021–T025 | ✅ complete |
 | 5 — User Story 3: data across restarts | T026–T032 | ✅ complete |
-| 6 — Polish & cross-cutting | T033–T045 | 🟨 audits done (T033–T035); edge cases and final review outstanding |
+| 6 — Polish & cross-cutting | T033–T045 | 🟨 audits done (T033–T035), port conflict done (T036); five edge cases and the final review outstanding |
 
 ### What this means in practice
 
@@ -726,7 +726,7 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 ### Immediately
 
-**T036** is the next unticked task. All three user stories are complete and verified, and the first three Phase 6 audits are done: no committed secret and no hard-coded value (T033), exact nine-for-nine variable parity between `docker-compose.yml` and `.env.example` (T034), and both images pinned to the most specific tag their projects publish (T035). What is left is the edge cases.
+**T037** is the next unticked task. All three user stories are complete and verified, and the first three Phase 6 audits are done: no committed secret and no hard-coded value (T033), exact nine-for-nine variable parity between `docker-compose.yml` and `.env.example` (T034), and both images pinned to the most specific tag their projects publish (T035). The first edge case, the port conflict (T036), is also done — it fails in about 2 seconds naming the port, and the `POSTGRES_PORT` override relocates the database without touching `docker-compose.yml`. What is left is the five remaining edge cases and the final review.
 
 The remaining Phase 6 work: the edge cases one at a time — a port conflict (T036), missing configuration (T037), a frozen container that must never be reported healthy (T038), the extension point for a future service (T039), the broker's disk alarm (T040), and recovery from an unclean shutdown (T041) — then the re-measurement of start-to-healthy timing against the finished configuration (T045), the README review (T042), the full 16-scenario quickstart run (T043), and this log's implementation entry (T044).
 
@@ -851,6 +851,117 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-30 (evening) — The port-conflict test, a healthy service nobody could reach, and a stopwatch that measured typing
+
+**What:** T036, the port-conflict edge case. It passes, but getting there took three attempts and produced two corrections to the documents plus one genuine behavioural discovery that a developer could easily hit by accident.
+
+---
+
+**Attempt 1 failed because the test never created a conflict.**
+
+To occupy host port 5432 the first instinct on Windows was a .NET socket listener:
+
+```powershell
+$squat = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, 5432)
+$squat.Start()      # reports IsBound : True
+```
+
+It reported success, and then `docker compose up -d --wait` started normally with the database published on 5432 as if nothing were holding it. The listener excluded nobody.
+
+The reason, confirmed by experiment rather than reasoning — with Docker already publishing 5432, a fresh `TcpListener` on the same port **still bound successfully**:
+
+**Windows lets a second socket bind an address that is already in use**, unless the first socket asked for exclusivity with `SO_EXCLUSIVEADDRUSE`. .NET's `TcpListener` does not ask. On Linux the same code would have failed with `EADDRINUSE`, which is why the trick is so commonly suggested. It is a genuine platform difference, not a quirk of this project.
+
+New term: **`SO_EXCLUSIVEADDRUSE`** is a Windows socket option meaning "no other socket may bind this address while I hold it". Its absence is the default, and the default on Windows is permissive. `SO_REUSEADDR`, the option people reach for on Unix to allow quick rebinding, has materially different semantics on the two platforms — this is the kind of detail that makes a test look like it passed.
+
+**The method that works is Docker itself:**
+
+```
+docker run -d --name portsquat --entrypoint sleep -p 5432:5432 postgres:18.4-alpine 300
+```
+
+Docker's port allocator keeps its own bookkeeping and refuses a duplicate host port regardless of what the OS would allow. It is also the more faithful test: the spec's edge case is "another broker, another database, or a previous copy of this environment", all of which are Docker publishing a port, not a bare socket. And it reuses an image already on the machine, so there is no pull.
+
+---
+
+**Attempt 2 produced a number that was 36 times too large, because the stopwatch was wrong.**
+
+The measured failure time came back as **72.1 seconds** against SC-009's 10-second budget — an apparent, serious failure. It was an artifact. The harness looked like this, across three separate interactive prompts:
+
+```powershell
+$sw = [Diagnostics.Stopwatch]::StartNew()
+docker compose up -d --wait
+$code = $LASTEXITCODE          # <- typed by hand, seconds later
+$sw.Stop()                     # <- typed by hand, seconds later still
+```
+
+The stopwatch ran until a human typed `$sw.Stop()`. It was measuring typing speed. Run non-interactively, in one shot:
+
+| Command | Exit | Elapsed |
+|---|---|---|
+| `docker compose up -d` | fails | **2.07s** |
+| `docker compose up -d --wait` | 1 | **2.04s** |
+
+So SC-009 passes with a wide margin: about 2 seconds against 10, with the port named in the error.
+
+**This also required retracting a claim made earlier the same day.** An earlier successful start, timed with the same broken harness, read 34.5s while Compose's own output showed the containers healthy at 7.0s and 14.0s. From that gap I inferred that T020's recorded warm figure of 14.5s might be a per-container number rather than wall-clock, and that the true margin against SC-002 was therefore nearer 40% than the 76% recorded. **That inference was built on the bad number and is withdrawn.** There is no evidence T020's figure is wrong. T045 should still measure wall-clock explicitly and say so — that part stands on its own — but the specific claim about the margin was unfounded.
+
+Worth sitting with: the log already contains a lesson from this morning that *a measurement is only as good as your model of what the measurement did*, written up after the `initdb` subtraction turned out to measure nothing. Hours later the same mistake was made in a new costume — accepting a number because the instrument reported it, without asking what the instrument was actually timing. **Knowing the lesson is not the same as applying it.** The practical form is narrower and more useful than the general principle: *an elapsed time is only valid if nothing human happened between the start and the stop.*
+
+---
+
+**Finding 1: "nothing partially started" is not something Compose can deliver.**
+
+T036 and `quickstart.md` Scenario 7 both expected `docker compose ps` to show no component partially started after a conflict. What actually happens:
+
+| Service | State after a conflicted start |
+|---|---|
+| `rabbitmq` | `Up (healthy)`, both ports published |
+| `postgres` | `Created`, no ports |
+
+Compose creates every container and then starts them. The port bind fails at start time, so any component whose ports are free is already running by then. There is no flag that makes this atomic, and building one would mean a wrapper script — which Principle V forbids and FR-018 argues against.
+
+So the expectation was corrected rather than the behaviour. `spec.md`'s edge case now accepts a partial start explicitly and states what actually matters: the command exits non-zero, names the port, never silently binds elsewhere, and leaves a state the documented recovery fully resolves. This is the same resolution shape as the `restart: unless-stopped` finding from the analyze pass — when the configuration's real behaviour is reasonable and the test's expectation is not, the expectation is what is wrong.
+
+---
+
+**Finding 2, and this one is a real trap: a service reported healthy that the host cannot reach.**
+
+Clearing the conflict and running the documented start command again:
+
+```
+docker compose up -d --wait          -> exit 0
+docker compose ps                    -> postgres   Up (healthy)
+docker port aegisshield-postgres-1   -> (nothing)
+NetworkSettings.Ports                -> {"5432/tcp":[]}
+HostConfig.PortBindings              -> {"5432/tcp":[{"HostPort":"5432"}]}
+connect to 127.0.0.1:5432            -> NOT REACHABLE
+```
+
+Exit zero. Reported healthy. Unreachable.
+
+The cause is that **Docker programs a container's published ports when the container is created, not when it is started.** The conflicted attempt left the database container in `Created` state; the next `up` started that existing container rather than recreating it, and the port binding was never programmed. The configuration still *says* 5432 — `HostConfig.PortBindings` is intact — while the runtime mapping is empty. Configuration and reality disagree, and `docker compose ps` reports the configuration.
+
+The healthcheck cannot catch it, and that is the part worth understanding. `pg_isready -h 127.0.0.1` runs **inside** the container, where the database is genuinely listening and genuinely fine. T010 chose `-h 127.0.0.1` over a socket check precisely to test a real TCP listener rather than a Unix socket, and that was the right call — but the listener it tests is the container's, and it can say nothing about whether the host can reach it. A healthcheck verifies the component, never the plumbing between the component and you.
+
+This does not break FR-019 as written, which is about a component being reported healthy when the *component* is not ready. But it produces exactly the experience FR-019 exists to prevent: a developer trusts `running (healthy)` and then cannot connect, with nothing in the output pointing at why.
+
+A second `up -d --wait` happens to repair it, because Compose eventually notices the divergence and recreates the container. Relying on running the same command twice is not a documented procedure. `docker compose down` first fixes it deterministically in one step, which is now in `README.md` under "If a port is already in use", alongside `docker port` as the way to detect the state.
+
+**The lesson:** **a status that reports configuration rather than observed reality will eventually lie to you, and the more trustworthy it usually is, the worse the lie.** `docker compose ps` is right virtually always, which is exactly why nobody double-checks it. The general habit worth keeping is to verify the property you actually care about: `docker port` and a connection attempt answer "can I reach this?", while `ps` answers "what is this supposed to be?".
+
+---
+
+**T036's other half passed cleanly.** Changing `POSTGRES_PORT` to `55432` in `.env` published the database on `0.0.0.0:55432->5432/tcp` with **zero edits to `docker-compose.yml`** — FR-004 demonstrated. The container side stayed `5432`, which is what lets a future application service keep using `postgres:5432` internally no matter what the host publishes.
+
+One wording fix there too: the task said to *append* `POSTGRES_PORT=55432` to `.env`. But `.env` is a copy of `.env.example`, which T004 required to contain all nine variables — so `POSTGRES_PORT` is always already present, and appending creates a duplicate key whose winner depends on dotenv precedence. The task and Scenario 7 now say to edit the existing line.
+
+---
+
+**State:** 36 of 45. Remaining: T037 (missing configuration), T038 (a frozen container must never report healthy), T039 (the extension point), T040 (the broker's disk alarm), T041 (unclean shutdown), T045 (re-measure timings), T042 (README review), T043 (full quickstart run), T044 (this log's implementation entry).
+
+No change to `docker-compose.yml` in this entry. The edits were to `spec.md`, `quickstart.md`, `tasks.md` and `README.md` — three corrections and one new warning, all of them things the environment taught us rather than things we designed.
 
 ### 2026-10-30 (later still) — User Story 3 is proven, and the three audits found a requirement that could not be met
 
