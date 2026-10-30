@@ -55,17 +55,27 @@ All commands run from the repository root.
 There is no `make up`, no wrapper script, and no task runner. `docker compose` is the interface —
 adding a layer over a one-line command would only create another thing to install and learn.
 
-Running `docker compose up -d --wait` a second time against a running environment is safe. It
-reconciles rather than duplicating, and it does not touch your data.
+### Running SQL from PowerShell on Windows
 
-### `down` and `down -v` are two characters apart and do very different things
+Windows PowerShell strips the inner double quotes when it passes arguments to `docker.exe`, so the
+obvious form fails — `psql` receives only `CREATE` and reports `syntax error at end of input`:
 
-- `docker compose down` removes the containers and the network. **Your data survives**, in the two
-  named volumes.
-- `docker compose down -v` also removes the volumes. **Every row in the database and every queue in
-  the broker is destroyed, irreversibly.**
+```powershell
+# broken on Windows PowerShell
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -c "CREATE TABLE t (id int);"'
+```
 
-`down -v` is the documented way to start completely fresh. It is not the way to stop for the day.
+Send the SQL on standard input instead, which keeps it off the command line entirely:
+
+```powershell
+'CREATE TABLE t (id int);' | docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+`-T` is what lets standard input through. The same applies to psql's backslash commands: pipe `'\dt'`
+rather than passing `-c "\dt"`, which the container's shell would otherwise reduce to `dt`.
+
+Commands whose quoted values contain no spaces are unaffected — that is why the `rabbitmqctl` and
+`rabbitmq-diagnostics` examples work as written. On macOS and Linux shells, none of this applies.
 
 ## Endpoints
 
@@ -171,3 +181,69 @@ docker compose up -d --wait   # 3. re-initialize with the new values
 
 There is no in-place path. This is the most common way to lose an afternoon with this kind of setup,
 which is why it is written down here.
+
+## Persistence and reset
+
+Each component keeps its state in a Docker **named volume**, created automatically on the first
+start. Nothing on your host is written to, and there is no directory to prepare.
+
+| Volume | Mounted at | Holds |
+|---|---|---|
+| `postgres-data` | `/var/lib/postgresql` | The database cluster, at `18/docker` inside the mount: your tables, your rows, and the `aegis` account |
+| `rabbitmq-data` | `/var/lib/rabbitmq` | The broker's Mnesia directory: users, the vhost, durable queue definitions, persistent messages |
+
+The database mount is `/var/lib/postgresql`, **not** `/var/lib/postgresql/data`. PostgreSQL 18 moved
+the cluster into a major-version-specific subdirectory and declares its volume one level up; a mount
+at the old path makes the image refuse to start.
+
+### What each stop command does to your data
+
+| Command | Containers | Data |
+|---|---|---|
+| `docker compose stop` | Stopped, left in place | Kept |
+| `docker compose down` | Removed | **Kept** |
+| `docker compose down -v` | Removed | **Destroyed** |
+
+`docker compose stop` is the quickest way to pause. The containers survive, so the next start skips
+container creation and only has to wait for each service to become healthy again — use it when you
+are coming back shortly. `docker compose down` removes the containers and the network, which is the
+clean way to stop for the day; your volumes are untouched either way.
+
+### `down` and `down -v` are two characters apart and do very different things
+
+- `docker compose down` removes the containers and the network. **Your data survives**, in the two
+  named volumes.
+- `docker compose down -v` also removes the volumes. **Every row in the database and every queue in
+  the broker is destroyed, irreversibly.**
+
+`down -v` is the documented way to start completely fresh. It is not the way to stop for the day.
+There is no confirmation prompt and no undo.
+
+### Starting an already-running environment is safe
+
+`docker compose up -d --wait` against a running environment is a no-op or a clean reconcile. It does
+not duplicate containers, re-create volumes, or touch stored data: a service that has drifted from
+`docker-compose.yml` is recreated to match, and anything already correct is left alone. Run it as
+often as you like — it is the right command whenever you are unsure what state things are in.
+
+### Changing a credential needs a reset
+
+See [Changing a credential requires a reset](#changing-a-credential-requires-a-reset) under
+Credentials. In short: the accounts are frozen into their volume when it is initialized, so editing
+`.env` afterwards has no effect until the volume is discarded with `down -v`. There is no in-place
+path.
+
+### Verified, not assumed
+
+Both halves of this were measured rather than taken on trust:
+
+- A row in PostgreSQL and a durable queue in RabbitMQ were both present after the next start in
+  **5 of 5** consecutive `docker compose down` / `up -d --wait` cycles.
+- `docker compose down -v` left **no** volume behind, and the following start came up empty — no
+  tables, no queues — in **5 of 5** consecutive reset cycles, with no manual repair.
+
+If a durable queue ever does go missing across a restart while the database row survives, suspect the
+broker's `hostname:` before the volume. RabbitMQ names its storage directory after its node name,
+which it derives from the container hostname, so an unpinned hostname makes a recreated broker read
+an empty directory beside your intact data. `docker-compose.yml` pins it to `aegisshield-rabbitmq`
+for exactly this reason.
