@@ -171,6 +171,34 @@ Everything the interface shows is also reachable through `rabbitmqctl` inside th
 | List users and their tags | `docker compose exec rabbitmq rabbitmqctl list_users` |
 | Check the messaging listener is reachable | `docker compose exec rabbitmq rabbitmq-diagnostics -q check_port_connectivity` |
 | Check for resource alarms | `docker compose exec rabbitmq rabbitmq-diagnostics -q check_alarms` |
+| Show limits and free space | `docker compose exec rabbitmq rabbitmq-diagnostics status` |
+
+#### If the broker stops accepting messages
+
+RabbitMQ does not fail when it runs low on disk or memory — it raises a **resource alarm** and
+blocks publishers while continuing to accept and deliver existing messages. Publishing simply hangs,
+which is easy to mistake for a network problem.
+
+The configured thresholds in this environment are the image defaults:
+
+| Alarm | Threshold |
+|---|---|
+| Free disk space | **50 MB** (`Disk free limit set to 50MB`, reported at boot) |
+| Memory high watermark | **0.6 of available memory** |
+
+Both are visible two ways, so a raised alarm is never silent:
+
+```bash
+docker compose exec rabbitmq rabbitmq-diagnostics -q check_alarms   # exits non-zero, names the alarm
+docker compose logs rabbitmq | grep -i alarm                        # warning when set, and when cleared
+```
+
+With an alarm in effect, `check_alarms` prints e.g. `Memory alarm on node rabbit@aegisshield-rabbitmq`
+and exits `69`, and the log carries
+`[warning] memory resource limit alarm set on node ...` followed by
+`*** Publishers will be blocked until this alarm clears ***`. Clearing is logged too. Note that the
+healthcheck stays `healthy` throughout, because the broker is working as designed — an alarm is
+back-pressure, not a fault.
 
 The `sh -c '...'` form with **single** quotes matters: it lets the container's own shell expand
 `$RABBITMQ_DEFAULT_VHOST`, which the image already has. `.env` is read by Compose for interpolation

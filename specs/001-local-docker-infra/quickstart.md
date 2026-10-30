@@ -295,7 +295,20 @@ docker compose exec rabbitmq rabbitmq-diagnostics status | grep -iA2 'disk'
 docker compose logs rabbitmq | grep -i 'disk' || echo "(no disk alarm logged - expected when healthy)"
 ```
 
-**Expected**: `check_alarms` exits `0` with no alarm in effect. `status` reports the configured `disk_free_limit` and the current free space, so the margin is inspectable before it becomes a problem. A raised alarm would appear in `docker compose logs rabbitmq` and would make `check_alarms` exit non-zero.
+**Expected**: `check_alarms` exits `0` with `Node rabbit@aegisshield-rabbitmq reported no alarms, local or clusterwide`. `status` reports the threshold and the current free space, so the margin is inspectable before it becomes a problem — measured as `Low free disk space watermark: 0.05 gb` against `Free disk space: 1022.6777 gb`. The boot log also states it outright: `Disk free limit set to 50MB`, right after `Enabling free disk space monitoring`.
+
+**The alarm path itself is demonstrated, not assumed.** Rather than fill the disk, raise the *memory* alarm instead — same `rabbit_alarm` subsystem, reversible in one command, destroys nothing:
+
+```bash
+docker compose exec rabbitmq rabbitmqctl set_vm_memory_high_watermark 0.0001
+docker compose exec rabbitmq sh -c 'rabbitmq-diagnostics -q check_alarms; echo "exit=$?"'
+docker compose logs rabbitmq | grep -i alarm | tail -3
+docker compose exec rabbitmq rabbitmqctl set_vm_memory_high_watermark 0.6   # restore
+```
+
+With an alarm in effect `check_alarms` prints `Memory alarm on node rabbit@aegisshield-rabbitmq` and exits **69**, and the log carries `[warning] memory resource limit alarm set on node ...` followed by `*** Publishers will be blocked until this alarm clears ***`. Clearing it logs `memory resource limit alarm cleared`. A disk alarm travels the same two channels, so the observability requirement is satisfied for both.
+
+**Note what does *not* change: the healthcheck stays `healthy` the whole time.** That is correct and worth understanding — `check_port_connectivity` tests whether the broker accepts connections, and under an alarm it does. An alarm is back-pressure, not a fault, so a developer debugging "my publish hangs" must look at `check_alarms` or the logs; `docker compose ps` will not tell them.
 
 **Actual disk exhaustion is deliberately not simulated.** Filling the host disk is destructive, and lowering the alarm threshold to make it reachable would mean a tenth environment variable and a configuration layer that nothing else needs — rejected under Principle V. Record the observed `disk_free_limit` in `README.md` beside the log command so a developer who hits the alarm knows immediately where to look.
 
@@ -313,7 +326,7 @@ docker compose up -d --wait
 
 # Kill outright - SIGKILL, not a graceful stop
 docker compose kill
-docker compose ps        # already restarting: restart: unless-stopped fires on a kill
+docker compose ps -a     # both Exited (137): a restart policy does not fire for an API kill
 
 # Wait for health to come back
 docker compose up -d --wait; echo "exit=$?"
@@ -325,7 +338,11 @@ docker compose exec rabbitmq sh -c   'rabbitmqctl list_queues --vhost "$RABBITMQ
 
 **Expected**: exit `0`, both components back to `running (healthy)`, the row still present and the durable queue still declared — with **no manual repair of stored state**. PostgreSQL replays its write-ahead log on start and RabbitMQ recovers its Mnesia directory; neither needs intervention for a simple kill.
 
-**Do not expect to catch the containers sitting exited.** Both services set `restart: unless-stopped`, and Docker's restart policy fires on any non-zero exit — a kill included — so the containers are already coming back before you can type the next command. That is the real laptop-lid behaviour and it is what the policy is for. What this scenario tests is that *state* survived the kill, not who issued the next start. To exercise the developer-initiated path too, suspend the policy first with `docker update --restart=no $(docker compose ps -q)`, kill again, confirm both containers show as exited, then `docker compose up -d --wait` and re-check the row and the queue. Restore the policy afterwards with `docker compose up -d --force-recreate --wait`.
+**You will catch the containers sitting exited, and that is correct.** An earlier revision of this scenario claimed the opposite — that `restart: unless-stopped` fires on a kill, so the containers would already be coming back. That is wrong, and T041 measured it: both sat `Exited (137)` with `RestartCount 0` for a full 30s after `docker compose kill`.
+
+Docker applies a restart policy when a container's **own process** exits. It does **not** apply one when the container is stopped or killed through the Docker API — the daemon marks it as deliberately stopped, which is precisely what `unless-stopped` means. The same experiment confirmed the other half: a container whose process exited non-zero by itself reached `RestartCount 6` within 24s under the same policy. So `restart: unless-stopped` is doing real work — it covers a crashed server process, and a host or daemon restart, which is the actual laptop-lid case — but not a kill you issued yourself.
+
+One consequence: there is no need to suspend the policy to test the developer-initiated path, because an API kill *is* already that path. A `docker update --restart=no` pass before killing changes nothing observable — T041 ran both and got identical results.
 
 If either cannot recover automatically, the spec permits the alternative but requires it be stated plainly: capture what `docker compose logs` reports and document the required reset in `README.md`. Silent corruption, or a hang with no explanation, is the failure this scenario exists to rule out.
 

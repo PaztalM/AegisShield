@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** 39 of the 45 tasks are done, and all three user stories are complete and verified. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and data provably survives a restart while `down -v` provably discards it. What is left is two edge cases, a re-measurement of the timings, and the final review. One thing to know before you use this environment: **after a failed start, always `docker compose down` before retrying** — a bare retry can report a service healthy while its port is unpublished and unreachable from your host (see the T036 entry). Sections 1–9 explain the reasoning that got us here.
+> **The single most important thing to understand right now:** 41 of the 45 tasks are done, and all three user stories are complete and verified. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and data provably survives a restart while `down -v` provably discards it. All edge cases are verified; what is left is a re-measurement of the timings and the final review. One thing to know before you use this environment: **after a failed start, always `docker compose down` before retrying** — a bare retry can report a service healthy while its port is unpublished and unreachable from your host (see the T036 entry). Sections 1–9 explain the reasoning that got us here.
 
 ---
 
@@ -668,7 +668,7 @@ AegisShield/
     └── tasks.md                       ← committed; the 45 numbered tasks
 ```
 
-### Task progress: 39 of 45 done
+### Task progress: 41 of 45 done
 
 | Phase | Tasks | Status |
 |---|---|---|
@@ -677,7 +677,7 @@ AegisShield/
 | 3 — User Story 1: one-command start 🎯 MVP | T007–T020 | ✅ complete |
 | 4 — User Story 2: management interface | T021–T025 | ✅ complete |
 | 5 — User Story 3: data across restarts | T026–T032 | ✅ complete |
-| 6 — Polish & cross-cutting | T033–T045 | 🟨 audits and four edge cases done (T033–T039); T040, T041, the re-measurement and the final review outstanding |
+| 6 — Polish & cross-cutting | T033–T045 | 🟨 audits and all six edge cases done (T033–T041); T045 re-measurement, T042–T044 review outstanding |
 
 ### What this means in practice
 
@@ -726,7 +726,7 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 ### Immediately
 
-**T040** is the next unticked task. All three user stories are complete and verified, and the first three Phase 6 audits are done: no committed secret and no hard-coded value (T033), exact nine-for-nine variable parity between `docker-compose.yml` and `.env.example` (T034), and both images pinned to the most specific tag their projects publish (T035). Four edge cases are done too: the port conflict fails in about 2 seconds naming the port and the `POSTGRES_PORT` override relocates the database without touching `docker-compose.yml` (T036); missing configuration is refused before any container is created, naming every missing variable (T037); a frozen database is reported `unhealthy` and `up -d --wait` refuses to claim success (T038); and a throwaway service joined the environment, waited for both healthchecks and reached both components by internal DNS with zero edits to their definitions (T039). What is left is T040, T041, the re-measurement and the final review.
+**T045** is the next unticked task. All three user stories are complete and verified, and the first three Phase 6 audits are done: no committed secret and no hard-coded value (T033), exact nine-for-nine variable parity between `docker-compose.yml` and `.env.example` (T034), and both images pinned to the most specific tag their projects publish (T035). All six edge cases are done too: the port conflict fails in about 2 seconds naming the port and the `POSTGRES_PORT` override relocates the database without touching `docker-compose.yml` (T036); missing configuration is refused before any container is created, naming every missing variable (T037); a frozen database is reported `unhealthy` and `up -d --wait` refuses to claim success (T038); and a throwaway service joined the environment, waited for both healthchecks and reached both components by internal DNS with zero edits to their definitions (T039); the broker's resource alarms are visible through both `check_alarms` and the logs, demonstrated by raising a reversible memory alarm rather than filling the disk (T040); and a SIGKILL of both containers loses no stored state, with PostgreSQL replaying its WAL and RabbitMQ recovering its Mnesia queues (T041). What is left is the re-measurement (T045) and the final review (T042–T044).
 
 The remaining Phase 6 work: the edge cases one at a time — a port conflict (T036), missing configuration (T037), a frozen container that must never be reported healthy (T038), the extension point for a future service (T039), the broker's disk alarm (T040), and recovery from an unclean shutdown (T041) — then the re-measurement of start-to-healthy timing against the finished configuration (T045), the README review (T042), the full 16-scenario quickstart run (T043), and this log's implementation entry (T044).
 
@@ -851,6 +851,93 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-31 — The disk alarm, the unclean shutdown, and correcting a finding this log got wrong
+
+**What:** T040 and T041. Both pass. 41 of 45. One of them overturns a conclusion recorded in this log on 2026-10-30, so that correction is the main business of this entry.
+
+---
+
+**T040 — the broker's resource alarms are observable.**
+
+RabbitMQ does not crash when it runs low on disk. It raises a **resource alarm** and blocks publishers while continuing to serve existing messages, so a full disk shows up as publishing that mysteriously hangs. The spec's requirement is only that the condition be *visible through status or logs* rather than silent, because actually filling the disk is destructive and lowering the threshold would need a tenth variable and a configuration layer that Principle V rules out.
+
+Healthy-state readings:
+
+| Reading | Value |
+|---|---|
+| `check_alarms` | exit `0`, "reported no alarms, local or clusterwide" |
+| Disk threshold | `Low free disk space watermark: 0.05 gb` |
+| Free space | `1022.6777 gb` |
+| Memory high watermark | `0.6` of available memory → 4.96 gb |
+| Boot log | `Enabling free disk space monitoring` → `Disk free limit set to 50MB` |
+
+The task said to "confirm `docker compose logs rabbitmq` is where a raised alarm would be reported", which could have been discharged by reading the documentation and asserting it. Instead the alarm path was **demonstrated**, by raising the *memory* alarm rather than the disk one — the same `rabbit_alarm` subsystem, one command to set and one to clear, nothing destroyed:
+
+```
+rabbitmqctl set_vm_memory_high_watermark 0.0001
+
+check_alarms -> Memory alarm on node rabbit@aegisshield-rabbitmq
+                exit=69
+logs         -> [warning] memory resource limit alarm set on node 'rabbit@aegisshield-rabbitmq'
+                *** Publishers will be blocked until this alarm clears ***
+
+rabbitmqctl set_vm_memory_high_watermark 0.6     # restores; clearing is logged too
+```
+
+Both channels work, so the requirement holds for disk as well — a disk alarm travels the identical path.
+
+**The finding worth keeping, which the task did not anticipate: the healthcheck stays `healthy` for the whole duration of an alarm.** That is correct behaviour, not a gap. `rabbitmq-diagnostics check_port_connectivity` asks whether the broker accepts connections, and under an alarm it does — the broker is deliberately applying back-pressure, not failing. But the consequence for a developer is sharp: when publishing hangs, `docker compose ps` will report everything healthy and tell you nothing. `README.md` now has an "If the broker stops accepting messages" section with both thresholds and the two commands that do reveal it.
+
+New term: a **resource alarm** is RabbitMQ refusing new publishes while a resource is scarce, to protect itself. It is a throttle, not an error, which is exactly why it is easy to misdiagnose: nothing is broken, and nothing is moving.
+
+---
+
+**T041 — recovery from an unclean shutdown. Passes, in both passes.**
+
+Killed outright with `docker compose kill` (SIGKILL, no graceful stop), the environment came back with **no manual repair of stored state**: the row was still there, `quickstart.durable` was still declared, and `docker compose up -d --wait` exited `0`. The recovery logs show the mechanisms doing their jobs — PostgreSQL replaying the write-ahead log (`redo starts at 0/1BD6558` → `redo done` → `checkpoint complete: end-of-recovery immediate wait`) and RabbitMQ recovering its Mnesia queues.
+
+The analyze pass's instruction that this task must write its own state rather than inherit T030's was **correct and load-bearing**: T031's five `down -v` cycles sit between them, so there was nothing left to inherit. Phase 0 wrote the row and the queue itself, and the task only worked because of that change.
+
+---
+
+**The correction: this log recorded a conclusion about `restart: unless-stopped` that is false.**
+
+The 2026-10-30 analyze entry, under "HIGH 1 — A verification step that could never observe what it claimed", says that T041's original expectation was impossible:
+
+> That check cannot pass. Both services set `restart: unless-stopped`, and Docker's restart policy fires on **any** non-zero exit — a kill included. The containers come back on their own, before you can type the next command.
+
+**They do not.** Measured:
+
+| Case | Policy | Result |
+|---|---|---|
+| A — `docker compose kill` on the real container | `unless-stopped` | `exited`, **`RestartCount 0`**, still exited after 30s |
+| B — container's own process runs `exit 1` | `unless-stopped` | `running`, **`RestartCount 6`** within 24s |
+| C — `docker kill` on a throwaway container | `unless-stopped` | `exited`, **`RestartCount 0`** after 10s |
+
+The rule is: **Docker applies a restart policy when the container's own process exits. It does not apply one when the container is stopped or killed through the Docker API.** The daemon records an API stop or kill as deliberate — which is literally what the name `unless-stopped` describes. Case B is the proof that the policy is live and working; cases A and C are the proof that a kill you issue yourself is exempt.
+
+So the original T041 and the original Scenario 16 — which said to run `docker compose ps` and see the containers exited — were **right**, and the analyze pass inverted a correct expectation. Three consequences have been fixed:
+
+- `tasks.md` T041 and `quickstart.md` Scenario 16 now expect `Exited (137)`, with the measurement and the mechanism recorded so nobody re-derives the wrong answer from the policy's name.
+- The second "suspend the policy and kill again" pass the analyze entry added is **redundant**, not merely unnecessary: an API kill already *is* the developer-initiated path. T041 ran both passes and they were identical in every observable — `Exited (137)`, recovery exit 0, `rows=1`, queue durable. Both task and scenario now say so.
+- `data-model.md`'s restart-policy row had been edited to say "the policy also fires after `docker compose kill`, so a killed container comes back on its own". That is now corrected, along with what the policy genuinely buys: a crashed server process, and the host or daemon restart — which is the actual laptop-lid case, and the one that justifies the policy under Principle V.
+
+**What the analyze pass got right, and it is worth being precise about this.** Its conclusion that the policy should be *kept* was correct, and its rejected alternative — delete `restart: unless-stopped` so the test is convenient — was rightly rejected. Its reasoning about *why* the test needed changing was wrong, but the configuration it defended is good. Only the factual premise failed.
+
+**The lesson, and it is uncomfortable because of where it comes from.** The HIGH-1 finding was confident, mechanically argued, and wrong, and it arrived inside a process whose entire purpose is catching exactly this. It then propagated into three documents and a logged lesson within one day, because a plausible explanation for a real-sounding problem is very easy to accept — especially when it comes with a tidy rejected-alternatives table.
+
+What distinguishes it from the findings that held up is simply that **nobody ran it.** The volume-path defect was caught by a container refusing to start. The pin-shape defect was caught by `docker manifest inspect` returning not-found. HIGH 1 was caught by reading the Compose file and reasoning about Docker's documented behaviour — and reasoning is where this one went wrong. `docker inspect --format '{{.RestartCount}}'` would have settled it in seconds, and that is the same four-second check that would have caught the PostgreSQL 18 path and the two-part version tag.
+
+So the rule this project keeps relearning, now in its fourth costume: **a claim about how a dependency behaves is a claim to be executed, not argued.** Static review is excellent at finding contradictions *between documents* — that is what every one of the analyze pass's surviving findings was. It is unreliable at establishing facts *about a dependency*, because the only authority there is the dependency.
+
+Second, smaller, and aimed at this log specifically: **a document that records its reasoning can be wrong in a way that is harder to dislodge than a bare assertion**, because the reasoning makes the conclusion feel checked. This entry exists so the next reader of the 2026-10-30 entry finds the correction rather than the confident paragraph. A pointer has been added there too.
+
+---
+
+**State:** 41 of 45. `docker-compose.yml` is unchanged since T028; everything since has been verification and documentation. Remaining: T045 (re-measure start-to-healthy timing against the final configuration, wall-clock, non-interactively), T042 (README review against FR-017), T043 (the full 16-scenario quickstart run), T044 (the implementation entry this log owes).
+
+The project's own test data (`quickstart_check` with one row, and the durable queue `quickstart.durable`) is deliberately left in place from T041's Phase 0.
 
 ### 2026-10-30 (night) — Three edge cases, all passing, and one estimate that was wrong in a useful way
 
@@ -1246,6 +1333,8 @@ Worth stating plainly: **the persistence claim is not yet proven.** The volumes 
 2. **Ran `/speckit-analyze` again** over `spec.md`, `plan.md`, and `tasks.md`. It reported 13 findings: no CRITICAL, four HIGH, five MEDIUM, four LOW. Requirement coverage came back clean — all 20 functional requirements and all 10 success criteria have at least one task — so every finding was about *correctness of the documents*, not holes in them. All 13 are now fixed. The four HIGH ones are the interesting ones and each taught something.
 
 ---
+
+> **CORRECTED 2026-10-31 — this finding's premise is false.** `restart: unless-stopped` does **not** fire after `docker compose kill`. Docker applies a restart policy when the container's own process exits, not when it is stopped or killed through the API. Measured: `RestartCount` stayed `0` for 30s after an API kill, while a self-exiting process reached `RestartCount 6` in 24s. T041's *original* expectation was right and this finding inverted it. Read the 2026-10-31 entry before acting on anything below.
 
 **HIGH 1 — A verification step that could never observe what it claimed.** T041 exists to prove the "unclean shutdown" edge case: kill the environment outright, start it again, confirm nothing was lost. It said to run `docker compose kill`, then check `docker compose ps` shows the containers *exited*, then start them.
 
