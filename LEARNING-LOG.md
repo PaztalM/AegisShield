@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** 41 of the 45 tasks are done, and all three user stories are complete and verified. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and data provably survives a restart while `down -v` provably discards it. All edge cases are verified; what is left is a re-measurement of the timings and the final review. One thing to know before you use this environment: **after a failed start, always `docker compose down` before retrying** — a bare retry can report a service healthy while its port is unpublished and unreachable from your host (see the T036 entry). Sections 1–9 explain the reasoning that got us here.
+> **The single most important thing to understand right now:** feature 001 is **complete** — 45 of 45 tasks. One command brings up a healthy RabbitMQ and a healthy PostgreSQL (45.1s cold, 14.2s warm), the broker's web interface is published, data provably survives a restart, and `down -v` provably discards it. **There is still no application code** — no Producer, no Worker, no schema, no automated tests. The 2026-10-31 implementation entry explains the whole thing line by line and states plainly what does not exist. One operational gotcha: after a failed start, run `docker compose down` before retrying, or you can get a service reported healthy that your host cannot reach.
 
 ---
 
@@ -24,6 +24,8 @@ This file assumes you know nothing in advance. Every term gets defined the first
 10. [Where we are right now](#10-where-we-are-right-now)
 11. [What happens next](#11-what-happens-next)
 12. [Glossary](#12-glossary)
+
+Then the **entry log**, newest first. If you want the finished feature explained from scratch — every line of `docker-compose.yml`, what was rejected, what surprised us, and what still does not exist — read [Feature 001 is implemented: the whole thing, explained](#2026-10-31--feature-001-is-implemented-the-whole-thing-explained), the newest entry. Sections 1–12 above are the background that led to it.
 
 ---
 
@@ -668,7 +670,7 @@ AegisShield/
     └── tasks.md                       ← committed; the 45 numbered tasks
 ```
 
-### Task progress: 41 of 45 done
+### Task progress: 45 of 45 done — feature complete
 
 | Phase | Tasks | Status |
 |---|---|---|
@@ -677,7 +679,7 @@ AegisShield/
 | 3 — User Story 1: one-command start 🎯 MVP | T007–T020 | ✅ complete |
 | 4 — User Story 2: management interface | T021–T025 | ✅ complete |
 | 5 — User Story 3: data across restarts | T026–T032 | ✅ complete |
-| 6 — Polish & cross-cutting | T033–T045 | 🟨 audits and all six edge cases done (T033–T041); T045 re-measurement, T042–T044 review outstanding |
+| 6 — Polish & cross-cutting | T033–T045 | ✅ complete |
 
 ### What this means in practice
 
@@ -726,9 +728,9 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 ### Immediately
 
-**T045** is the next unticked task. All three user stories are complete and verified, and the first three Phase 6 audits are done: no committed secret and no hard-coded value (T033), exact nine-for-nine variable parity between `docker-compose.yml` and `.env.example` (T034), and both images pinned to the most specific tag their projects publish (T035). All six edge cases are done too: the port conflict fails in about 2 seconds naming the port and the `POSTGRES_PORT` override relocates the database without touching `docker-compose.yml` (T036); missing configuration is refused before any container is created, naming every missing variable (T037); a frozen database is reported `unhealthy` and `up -d --wait` refuses to claim success (T038); and a throwaway service joined the environment, waited for both healthchecks and reached both components by internal DNS with zero edits to their definitions (T039); the broker's resource alarms are visible through both `check_alarms` and the logs, demonstrated by raising a reversible memory alarm rather than filling the disk (T040); and a SIGKILL of both containers loses no stored state, with PostgreSQL replaying its WAL and RabbitMQ recovering its Mnesia queues (T041). What is left is the re-measurement (T045) and the final review (T042–T044).
+**Feature 001 is complete — 45 of 45 tasks.** There is no next task in it. The 2026-10-31 implementation entry in the entry log below explains the finished feature line by line, lists what was rejected, records the cold and warm timings with what their comparison shows, and states plainly what still does not exist.
 
-The remaining Phase 6 work: the edge cases one at a time — a port conflict (T036), missing configuration (T037), a frozen container that must never be reported healthy (T038), the extension point for a future service (T039), the broker's disk alarm (T040), and recovery from an unclean shutdown (T041) — then the re-measurement of start-to-healthy timing against the finished configuration (T045), the README review (T042), the full 16-scenario quickstart run (T043), and this log's implementation entry (T044).
+**What comes next is a new feature, not more of this one.** The next one introduces an application service — a Producer or a Worker — and three things this feature built exist specifically for it: `postgres` and `rabbitmq` as internal DNS names, `depends_on` with `condition: service_healthy` to wait for both, and the extension point proven by T039 (a throwaway service joined the environment and reached both components with zero edits to their definitions). The constitution's Principle IV retry-on-unavailable-dependency requirement was deliberately deferred to that feature, because the party that must retry is an application service and this one ships none.
 
 All three user stories are done. One command brings up a healthy broker and a healthy database; the broker's web interface is published with the project's own administrator account and no reachable `guest`; and data survives a stop while `down -v` provably discards it, each measured over five consecutive cycles.
 
@@ -851,6 +853,277 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-31 — Feature 001 is implemented: the whole thing, explained
+
+**What this entry is.** Principle VI requires that after a feature is built, this log explains it from scratch: what exists, what every line of it is for, what was rejected, what surprised us, and what still does not exist. This is that entry for **001-local-docker-infra**, and it is written to be readable by someone who has never seen the project. The individual entries above are a diary; this one is the explanation.
+
+**Two documents, two jobs, and neither replaces the other.** `README.md` is **operator documentation**: how to run the environment, what the commands are, what the addresses are, what to do when something fails. If you want to use this thing, read that. `LEARNING-LOG.md` — this file — is a **teaching document**: why it is built the way it is, what each decision cost, and what we got wrong on the way. If you want to understand or change this thing, read this. Someone following the README should never need this file; someone modifying the Compose file should read this one first.
+
+---
+
+#### 1. What was built
+
+One file does the work: **`docker-compose.yml`**, 59 lines, defining two containers.
+
+- **RabbitMQ 4.2.4** (the *message broker* — software that accepts messages from one program and holds them until another program collects them), with its web management interface, on host ports 5672 and 15672.
+- **PostgreSQL 18.4** (the relational database), on host port 5432.
+
+Supporting it: **`.env.example`** (nine configuration variables with working development defaults), **`.env`** (your private copy, git-ignored), and **`README.md`**.
+
+Two commands take you from a fresh clone to a working environment:
+
+```bash
+cp .env.example .env
+docker compose up -d --wait
+```
+
+Measured at **45.1 seconds** from nothing — no images on the machine at all — and **14.2 seconds** once the images are cached.
+
+That is the whole feature. **No application code was written**, and that is deliberate: this feature's job was to provide the infrastructure that the Producer and Worker will later run against.
+
+---
+
+#### 2. Every line of `docker-compose.yml`, and why it is that way
+
+New term first: **Docker Compose** reads one YAML file describing a set of containers and runs them together as a unit. A **container** is a program plus everything it needs to run, isolated from the rest of your machine. An **image** is the template a container is made from.
+
+##### The header and `services:`
+
+```yaml
+# AegisShield — local development environment.
+services:
+```
+
+There is **no `version:` key**. Older Compose files began with `version: "3.8"` or similar; that field is obsolete in Compose v2 and emits a warning. Its absence is intentional, not an omission.
+
+##### `postgres` — lines 7–27
+
+```yaml
+  postgres:
+```
+
+**The service name is load-bearing.** It is also the hostname other containers use: a future Worker connects to `postgres:5432`. Renaming this service would silently break every future service's connection string, which is why the task specified it exactly.
+
+```yaml
+    image: postgres:18.4-alpine
+```
+
+Pinned to an exact release. `-alpine` means it is built on Alpine Linux, a deliberately tiny base — which is why the whole image is 412 MB rather than over a gigabyte. **Rejected: `postgres:latest`.** A floating tag means two developers can get different databases from the same file on the same day, and a build that worked yesterday can break overnight with no change on your side (FR-013).
+
+Note `18.4` has only two parts. PostgreSQL has versioned as *major.patch* since version 10, so `18.4` is the complete version — there is no `18.4.0`. Earlier revisions of the design documents demanded a "full major.minor.patch tag", which is unsatisfiable here; see the 2026-10-30 audit entry.
+
+```yaml
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is not set - copy .env.example to .env}
+```
+
+This is **interpolation** — Compose substitutes a value from `.env` before Docker sees the file. The `:?message` form means *required*: if the variable is missing or empty, Compose refuses to start and prints that message.
+
+Three decisions are packed in here. **The value is never written in this file**, so no credential is committed (FR-005). **Each variable is listed explicitly rather than using `env_file:`**, so the file records which image consumes which variable — `env_file:` would hand the whole file to both containers and tell the reader nothing. And **the error message names the variable and the fix.** Without the `:?`, a missing password reaches PostgreSQL and surfaces as an authentication failure that points nowhere; T037 confirmed that with `.env` absent you get all six missing variables named at once, before any container is created.
+
+The message uses a plain ASCII hyphen, never an em dash, because it is printed to terminals that may be cp1252 (see the 2026-10-23 entry).
+
+```yaml
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+```
+
+The form is `host:container`. The **host** side uses `:-5432`, the *defaulted* form — omit the variable and you get 5432, so the file works without configuration but a developer whose machine already uses 5432 can move it (FR-004). The **container** side is the fixed literal `5432` and is never interpolated: inside the container network the address must not move, or every future service's connection string becomes a guess.
+
+So there are two tiers of variable, and the difference is checkable: T037 commented out a *required* variable and the start was refused by name; commenting out this *defaulted* one started normally on 5432.
+
+```yaml
+    volumes:
+      - postgres-data:/var/lib/postgresql
+```
+
+Attaches a **named volume** — storage with a name you chose, which Docker keeps when the container is destroyed and finds again by name on the next start. Without this, the database writes into an *anonymous* volume that `docker compose down` orphans, so every restart starts empty.
+
+**The path is `/var/lib/postgresql`, not `/var/lib/postgresql/data`,** and this cost us a debugging session. The `/data` path is correct for PostgreSQL 9 through 17 and wrong for 18, which stores the cluster in a version-specific subdirectory (`/var/lib/postgresql/18/docker`) and declares its volume one level up so a future `pg_upgrade --link` need not cross a mount boundary. The image **refuses to start** if it finds a mount at the old path. **Rejected: a host bind mount** such as `./data:/var/lib/postgresql` — bind mounts bring file-permission and path-translation problems across Linux, macOS and Windows, and `docker compose down -v` would not clean them up, which would silently break the documented reset command.
+
+```yaml
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+```
+
+A **healthcheck** is a command Docker runs *inside* the container on a schedule to decide whether the service is actually working. `CMD-SHELL` means "run this through a shell", which is what allows the quoting and variable expansion.
+
+The `$$` is a Compose escape: it emits a single `$`, so the container's own shell expands `$POSTGRES_USER` at runtime. A single `$` would make Compose try to interpolate it from `.env` instead — same text, completely different timing.
+
+**`-h 127.0.0.1` is mandatory, not decoration.** Without it `pg_isready` checks a Unix socket, which answers during first-start initialization *before* the TCP listener exists — a false "ready" that would break the promise that nothing is reported healthy before it accepts connections (FR-010, SC-003).
+
+```yaml
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+```
+
+Check every 5s; a check that hangs longer than 5s counts as failed; 5 consecutive failures mark the service **unhealthy**; and for the first 30s failures don't count, because first-start initialization legitimately takes 10–20s.
+
+T038 measured the time from freezing the server to `unhealthy` as **41s**, not the ~25s originally written here. The original arithmetic was `retries × interval` = 25s, which assumes each failed check returns instantly. Against a *frozen* server each round costs `timeout + interval`. Against a *crashed* server the original number would be right. `timeout` only costs you anything when a check hangs — which is precisely the case the healthcheck exists to catch.
+
+```yaml
+    networks:
+      - aegisshield-net
+    restart: unless-stopped
+```
+
+An explicit user-defined **bridge network** — a private virtual network for these containers, which gives them DNS resolution by service name. `restart: unless-stopped` asks Docker to start the container again if its process dies, or after the host or Docker itself restarts.
+
+**That policy does *not* apply to `docker compose kill` or `stop`**, and this log previously claimed the opposite. Docker treats a stop or kill issued through its API as deliberate — which is what "unless stopped" names — so a killed container stays `Exited (137)`. Measured: `RestartCount` stayed `0` for 30s after an API kill, while a container whose process exited on its own reached `RestartCount 6` in 24s. What the policy actually buys is the crashed-process case and the reboot case.
+
+##### `rabbitmq` — lines 29–51
+
+Most lines mirror the database's, for the same reasons. The differences are what matter.
+
+```yaml
+    image: rabbitmq:4.2.4-management-alpine
+```
+
+The `-management` variant ships the web interface already enabled. **Rejected: the plain image plus a plugin-enable step, or a custom `Dockerfile`** — both add a build or a start-up step to save nothing (Principle V: no speculative machinery).
+
+```yaml
+    hostname: aegisshield-rabbitmq
+```
+
+**The subtlest line in the file, and it is required rather than cosmetic.** RabbitMQ derives its node name from the container hostname and stores its database in a directory named after that node — verified: `rabbit@aegisshield-rabbitmq`, with `/var/lib/rabbitmq/mnesia/rabbit@aegisshield-rabbitmq`. Docker assigns a *random* hostname to a recreated container. So without this line, a restart produces a new node name, RabbitMQ looks for a directory that does not exist, initializes an empty one *beside* your intact data, and your durable queues appear to have vanished.
+
+New term: **Mnesia** is the database built into Erlang (the language RabbitMQ is written in) where the broker keeps its users, virtual hosts and queue definitions.
+
+It is deliberately **not** `container_name:`, which stays unset so two copies of this project can run on one machine without colliding.
+
+```yaml
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+```
+
+The web interface. Same account as the messaging port; there is no separate web password.
+
+```yaml
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:?...}
+```
+
+New term: a **virtual host** (vhost) is a named partition inside one broker, with its own queues and permissions. This environment uses `aegisshield` rather than RabbitMQ's default `/`.
+
+That choice has a consequence worth knowing, and T042 caught the README getting it wrong: a bare `rabbitmqctl list_queues` reads vhost `/`, succeeds, and lists **nothing** — indistinguishable from your queues having disappeared. Broker commands here need `--vhost`.
+
+Setting these three `RABBITMQ_DEFAULT_*` variables is also what causes the image to create the project's administrator **instead of** the stock `guest`/`guest` account on a fresh volume. No separate step deletes `guest`; it is never created (FR-008, verified in T024).
+
+```yaml
+      test:
+        - CMD-SHELL
+        - rabbitmq-diagnostics -q check_port_connectivity
+```
+
+This opens a TCP connection to every listener the node has published. **Rejected: `rabbitmq-diagnostics ping` and `check_running`** — both can pass before the messaging listener is bound, which is the same false-ready failure `-h 127.0.0.1` prevents on the database side.
+
+```yaml
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+```
+
+Longer than the database's on every axis. An Erlang node boot plus the management plugin commonly takes 20–40s on a first start, and `rabbitmq-diagnostics` starts a short-lived Erlang VM *per invocation*, so it needs a timeout `pg_isready` does not. A success during `start_period` marks the service healthy immediately, so the 60s window costs nothing when things are fast.
+
+##### The bottom of the file — lines 53–59
+
+```yaml
+networks:
+  aegisshield-net:
+    driver: bridge
+
+volumes:
+  rabbitmq-data:
+  postgres-data:
+```
+
+Declaring the network explicitly rather than relying on Compose's implicit default makes it a named thing a future service can join. The two volumes are declared with no options — the defaults are correct, and options nobody needs would be speculative.
+
+---
+
+#### 3. What behaved differently from the plan
+
+Five things, and the pattern across them is the most useful thing in this entry.
+
+| Expectation | Reality |
+|---|---|
+| Mount the database at `/var/lib/postgresql/data` | PostgreSQL 18 moved it; the image refuses to start |
+| Both images pinned to `major.minor.patch` | PostgreSQL has no third version component |
+| `docker compose ps` shows nothing partially started on a port conflict | The broker is left running; Compose cannot avoid this |
+| `restart: unless-stopped` fires on `docker compose kill` | It does not; API kills are exempt |
+| 5 failed checks mark a service unhealthy in ~25s | 41s, because a hanging check also costs its timeout |
+
+Four of the five are the same mistake: **a confident statement about how a dependency behaves, written from reasoning or memory rather than from asking the dependency.** Every one was settled in seconds by a command — `docker image inspect`, `docker manifest inspect`, `docker inspect --format '{{.RestartCount}}'`, `docker compose ps`.
+
+The one that hurt most was the restart policy, because it did not come from carelessness. It came from `/speckit-analyze`, as a confidently argued HIGH finding complete with a rejected-alternatives table, and it propagated into three documents and a logged lesson within a day. What separated it from that review's many *correct* findings is that the correct ones were contradictions **between documents**, which static reading genuinely does find, while this one was a claim **about a dependency**, which static reading cannot settle.
+
+So: **static review finds contradictions; only execution establishes facts.**
+
+A sixth item belongs here even though it is about our own tooling rather than the environment: **the test harness was wrong more often than the thing under test.** A port-conflict "failure" at 72 seconds turned out to be a stopwatch stopped by hand at a later shell prompt. A squatter socket that excluded nothing, because Windows permits a second bind where Linux does not. An assertion that a table list was empty, when the tool prints "Did not find any tables." A `grep -c` returning exit 1 for a legitimate count of zero, aborting a `&&` chain before the environment started. **A test that reports a false failure is as much a defect as one that reports a false pass**, and all four were caught only because the results looked odd enough to re-examine.
+
+---
+
+#### 4. The timings, and what the comparison shows
+
+| | Cold (no images) | Warm (images cached) |
+|---|---|---|
+| **T020** — measured before the volumes were mounted | 50.5s | 14.5s |
+| **T045** — measured against the final configuration | **45.1s** | **14.2s** |
+| Budget | 300s (SC-001) | 60s (SC-002) |
+
+**The re-measurement was prompted by a reasonable worry that turned out not to matter.** The analyze pass observed that T020's numbers were taken before the volume mounts existed, so its "warm" start had been rebuilding the database from scratch each time rather than reattaching to storage — meaning the figures might not describe the finished environment. Correct reasoning; the numbers came back the same.
+
+What the equality actually tells us is more interesting than the numbers:
+
+1. **`initdb` is cheap.** T020's warm run re-created the whole database cluster; T045's reused an existing one. The difference is 0.3s, which is noise. First-time database initialization is not a meaningful cost at this scale.
+2. **The warm time is set by the broker, not the database.** Across every run, PostgreSQL reached healthy in 6.3–7.2s and RabbitMQ in 13.7–14.8s, and the two start in parallel. So the ~14s warm figure *is* RabbitMQ's Erlang boot; the database's work is entirely hidden inside it. Any future attempt to make startup faster must target the broker, and effort spent on the database would show up as nothing at all.
+3. **The cold run is mostly download.** 670 MB of uncompressed image content in 45.1s, against a start that takes 14s warm.
+
+One clause of SC-001 is **not** satisfied and should not be claimed: it asks for the measured link speed recorded alongside the timing, and no link-speed measurement was taken. What can honestly be said is that a 45.1s cold start against a 300s budget leaves the connection obviously not the limiting factor.
+
+A caution recorded in passing: an earlier entry speculated that T020's 14.5s might be a per-container figure rather than wall-clock, implying a much thinner margin. T045's 14.2s, measured wall-clock and non-interactively, shows T020 was right. That speculation was withdrawn when the faulty stopwatch was found, and this confirms the withdrawal.
+
+---
+
+#### 5. Where the project stands
+
+**45 of 45 tasks in feature 001 are complete.** All three user stories are built and verified, every edge case is exercised, and all 16 quickstart scenarios pass.
+
+What works, and has been measured rather than assumed:
+
+- One command brings up a healthy broker and a healthy database, 45.1s cold, 14.2s warm, and nothing is reported ready before it accepts connections.
+- Data survives a stop and start — proven over 5 consecutive cycles — and `docker compose down -v` genuinely returns the environment to a first-start state, proven over 5 more.
+- The broker's web interface is published, using the project's own administrator account, with `guest` never created.
+- A port conflict fails in 1.8s naming the port, and the published port can be moved from `.env` without editing the Compose file.
+- Missing configuration is refused before any container is created, naming every missing variable.
+- A frozen component is reported `unhealthy` and the start command refuses to claim success.
+- A SIGKILL of both containers loses nothing: PostgreSQL replays its write-ahead log, RabbitMQ recovers its Mnesia directory.
+- A new service can join the environment, wait for both components to be healthy, and reach them by internal DNS — with **zero edits** to the two existing service definitions.
+- No secret is committed, nothing is hard-coded, both images are exactly pinned, and the nine variables match the example file exactly.
+
+##### What still does not exist
+
+Plainly, so nobody is surprised:
+
+- **No Producer and no Worker.** No application code of any kind — no source directory, no dependency manifest, no Dockerfile.
+- **No database schema and no migrations.** The `aegisshield` database is created empty. The only table that has ever existed in it was `quickstart_check`, a throwaway used to prove persistence.
+- **No queues or exchanges are declared by this feature.** The broker starts with an empty vhost; the services that need queues will declare them.
+- **No automated test suite, and no CI.** Verification here was manual and scripted against `quickstart.md`. The constitution requires an automated integration test for the Producer → RabbitMQ → Worker → PostgreSQL path, and that belongs to the feature introducing those services — it cannot be written against infrastructure alone.
+- **Nothing about deployment, production, or anything beyond one developer's machine.** Every credential in `.env.example` is development-grade and localhost-only.
+
+##### One behaviour to know before you use it
+
+If a start fails, run **`docker compose down` before retrying** rather than `up` again. A failed start can leave a container in `Created` state, and Docker programs published ports at container *creation* — so the next `up` starts it without its port binding, exits `0`, and reports the service **healthy** while nothing on your host can reach it. The healthcheck cannot see this, because it runs inside the container where the database genuinely is fine. `docker compose port postgres 5432` prints nothing when you are in that state. This is in `README.md` too, because it can happen in ordinary use.
+
+---
+
+#### 6. What to read next
+
+Feature 001 is done. The next feature introduces an application service, and three things this one built exist specifically for it: the service name `postgres` and `rabbitmq` as internal DNS names, `depends_on` with `condition: service_healthy` to wait for both, and the extension point proven by T039. The retry-on-unavailable-dependency requirement from the constitution's Principle IV was deliberately deferred to that feature, because the party that must retry is an application service and this feature ships none.
 
 ### 2026-10-31 — The disk alarm, the unclean shutdown, and correcting a finding this log got wrong
 
