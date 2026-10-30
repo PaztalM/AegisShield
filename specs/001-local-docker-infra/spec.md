@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-23
 
-**Status**: Draft
+**Status**: In implementation (User Stories 1 and 2 built; User Story 3 and Polish outstanding — see `tasks.md`)
 
 **Input**: User description: "Local Docker Infrastructure: As a developer, I need a docker-compose setup to run RabbitMQ (ports 5672, 15672) and PostgreSQL (port 5432) locally so I can develop the microservices."
 
@@ -64,7 +64,7 @@ A developer stops the environment at the end of the day and starts it again the 
 
 - **A required host port is already taken** (another broker, another database, or a previous copy of this environment): the start command must fail loudly with a message that names the conflicting port, rather than starting partially or silently binding elsewhere. The developer must be able to relocate the published port through configuration without editing the environment definition.
 - **One component accepts connections later than the other**: a component must not be reported ready before it actually accepts connections. Readiness is decided by a real connection check, not by the container having been created.
-- **A dependency is temporarily unreachable while something is starting** (constitution Principle IV): the dependent party must retry rather than exit permanently.
+- **A dependency is temporarily unreachable while something is starting** (constitution Principle IV): the dependent party must retry rather than exit permanently. **Deferred to the Producer and Worker features, deliberately.** The party that must retry is an application service, and this feature ships none, so there is nothing here to make retry. What this feature owes the retry requirement is the means to satisfy it: a readiness check per component (FR-010) and support for declaring a startup dependency on a healthy component (FR-015). Both are delivered and verified. The retry loop itself is a requirement on the first service that connects, and belongs in that service's spec.
 - **The active configuration file is missing or incomplete**: the developer is told which setting is missing and where the example file is, instead of getting an opaque authentication failure from the broker or the database.
 - **Credentials are changed in configuration after storage was first created**: the database keeps the credentials it was initialised with, so a changed value will fail to authenticate. The documentation must state that changing credentials requires discarding stored state.
 - **The environment is started twice in a row**: the second start is a no-op or a clean restart; it must not create duplicate components or corrupt stored state.
@@ -75,7 +75,7 @@ A developer stops the environment at the end of the day and starts it again the 
 
 ### Functional Requirements
 
-- **FR-001**: The environment MUST define exactly two infrastructure components — a message broker and a relational database — in a single environment definition at the repository root, startable with one command.
+- **FR-001**: The environment MUST define the two infrastructure components this feature delivers — a message broker and a relational database — in a single environment definition at the repository root, startable with one command. "Two" is the count this feature adds, not a ceiling on the file: the constitution requires the Producer and the Worker to live in this same definition later, which FR-015 provides for.
 - **FR-002**: The broker MUST publish its messaging endpoint on host port `5672` and its web management endpoint on host port `15672` by default, each overridable per FR-004.
 - **FR-003**: The database MUST publish its endpoint on host port `5432` by default, overridable per FR-004.
 - **FR-004**: Each published host port MUST be overridable through configuration, so a developer whose host already uses one of these ports can relocate it without editing the environment definition.
@@ -108,14 +108,14 @@ A developer stops the environment at the end of the day and starts it again the 
 
 ### Measurable Outcomes
 
-- **SC-001**: On a machine with container tooling and nothing else installed, a developer reaches a fully healthy local environment from a single start command plus one preparation step (copying the example configuration), in under 5 minutes including first-time image downloads on a typical broadband connection.
+- **SC-001**: On a machine with container tooling and nothing else installed, a developer reaches a fully healthy local environment from a single start command plus one preparation step (copying the example configuration), in under 5 minutes including first-time image downloads on a connection of at least 50 Mbit/s. The link speed is part of the criterion because the image pull dominates the cold number; a slower connection is not a failure of this environment, so the measured link speed is recorded alongside the timing.
 - **SC-002**: Once images are cached locally, a start-to-healthy cycle completes in under 60 seconds.
 - **SC-003**: 100% of the environment's components report healthy before the start command reports the environment ready; a developer never has to guess whether a component is accepting connections yet.
 - **SC-004**: A developer can reach the broker's messaging endpoint, the broker's management interface, and the database from the host using only values read from the committed example configuration — 3 of 3 endpoints reachable, with zero undocumented values needed.
 - **SC-005**: Data written before a stop is present after the next start in 100% of attempts, across at least 5 consecutive stop/start cycles.
 - **SC-006**: The documented reset command returns the environment to a state indistinguishable from a first-ever start, verified over at least 5 consecutive reset-and-start cycles with no manual repair.
 - **SC-007**: Zero secrets are present in version control and zero configuration values are hard-coded in the environment definition, verified by inspection of the committed files.
-- **SC-008**: A contributor who has never seen the project completes setup from the written documentation alone, without asking anyone for help, in under 10 minutes of hands-on time.
+- **SC-008**: A contributor who has never seen the project completes setup from the written documentation alone, without asking anyone for help, in under 10 minutes of hands-on time. Because this project has one maintainer, the criterion is verified as a property of the documentation rather than by recruiting a stranger: every value the setup needs appears in the committed documentation or the example configuration, no step in the documented path depends on a value or command written down nowhere, and no step assumes the reader has seen this feature's design documents. Timing an uninvolved person is the better evidence and is taken when one is available, but the audit is what gates the criterion.
 - **SC-009**: When a required host port is already occupied, the start command fails within 10 seconds with a message naming the occupied port, in 100% of attempts.
 - **SC-010**: Adding the first application service to the environment definition later requires no change to the two infrastructure components' own definitions beyond that service declaring a dependency on them.
 

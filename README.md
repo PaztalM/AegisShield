@@ -92,6 +92,57 @@ The start fails immediately, naming the occupied port, and leaves nothing half-r
 corresponding variable in `.env` — for example `POSTGRES_PORT=55432` — and start again. Do not edit
 `docker-compose.yml`; the override exists precisely so you never have to.
 
+## Broker management interface
+
+The broker ships with its web management interface already enabled — the image is the
+`-management-alpine` variant, so there is no plugin to turn on and no custom image to build.
+
+Open **http://localhost:15672**, or whichever port `RABBITMQ_MANAGEMENT_PORT` names in `.env`.
+
+Sign in with the **same account you use for AMQP** — `RABBITMQ_DEFAULT_USER` and
+`RABBITMQ_DEFAULT_PASS` from `.env`. There is no separate web password. That account carries the
+`administrator` tag, so the whole interface is available: queues, connections, channels, exchanges,
+and live message rates.
+
+You can administer the broker by hand from there — create a queue, publish a test message, purge a
+queue — and the result is real broker state, visible immediately from the command line as well.
+
+### `guest` does not exist here
+
+Out of the box, RabbitMQ creates a `guest`/`guest` account. This environment never does: setting
+`RABBITMQ_DEFAULT_USER` and `RABBITMQ_DEFAULT_PASS` makes the image create the project account
+*instead of* the stock one, on the first start of a fresh volume.
+
+Signing in as `guest` is therefore rejected — not because the password is wrong, but because no such
+user was ever created. Confirm with:
+
+```bash
+docker compose exec rabbitmq rabbitmqctl list_users
+```
+
+which lists exactly one user:
+
+```text
+user    tags
+aegis   [administrator]
+```
+
+### Inspecting the broker without a browser
+
+Everything the interface shows is also reachable through `rabbitmqctl` inside the container, so
+**no broker client needs to be installed on your host**:
+
+| Intent | Command |
+|---|---|
+| List queues with message counts | `docker compose exec rabbitmq sh -c 'rabbitmqctl list_queues --vhost "$RABBITMQ_DEFAULT_VHOST" name messages'` |
+| List users and their tags | `docker compose exec rabbitmq rabbitmqctl list_users` |
+| Check the messaging listener is reachable | `docker compose exec rabbitmq rabbitmq-diagnostics -q check_port_connectivity` |
+| Check for resource alarms | `docker compose exec rabbitmq rabbitmq-diagnostics -q check_alarms` |
+
+The `sh -c '...'` form with **single** quotes matters: it lets the container's own shell expand
+`$RABBITMQ_DEFAULT_VHOST`, which the image already has. `.env` is read by Compose for interpolation
+into `docker-compose.yml`; it is not exported into your host shell.
+
 ## Credentials
 
 Every credential, database name, and host port comes from `.env`, which you create by copying

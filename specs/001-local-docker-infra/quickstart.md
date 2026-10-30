@@ -130,7 +130,7 @@ docker compose exec rabbitmq sh -c \
 
 The broker half of this scenario is the one that fails if the Compose file omits a fixed container `hostname:` — the volume is intact but the node name changed, so the queue appears to have vanished. See section 7 of [research.md](./research.md). If the queue disappears here, check the hostname before suspecting the volume.
 
-Drop `quickstart_check` when finished, or reset with the next scenario.
+Leave `quickstart_check` in place and let the next scenario's `down -v` clear it — removing both the table and the queue is exactly what Scenario 6 sets out to prove.
 
 ---
 
@@ -306,9 +306,9 @@ docker compose up -d --wait
 
 # Kill outright - SIGKILL, not a graceful stop
 docker compose kill
-docker compose ps        # containers exited, not stopped cleanly
+docker compose ps        # already restarting: restart: unless-stopped fires on a kill
 
-# Restart
+# Wait for health to come back
 docker compose up -d --wait; echo "exit=$?"
 
 # Verify both recovered with no manual repair
@@ -317,6 +317,8 @@ docker compose exec rabbitmq sh -c   'rabbitmqctl list_queues --vhost "$RABBITMQ
 ```
 
 **Expected**: exit `0`, both components back to `running (healthy)`, the row still present and the durable queue still declared — with **no manual repair of stored state**. PostgreSQL replays its write-ahead log on start and RabbitMQ recovers its Mnesia directory; neither needs intervention for a simple kill.
+
+**Do not expect to catch the containers sitting exited.** Both services set `restart: unless-stopped`, and Docker's restart policy fires on any non-zero exit — a kill included — so the containers are already coming back before you can type the next command. That is the real laptop-lid behaviour and it is what the policy is for. What this scenario tests is that *state* survived the kill, not who issued the next start. To exercise the developer-initiated path too, suspend the policy first with `docker update --restart=no $(docker compose ps -q)`, kill again, confirm both containers show as exited, then `docker compose up -d --wait` and re-check the row and the queue. Restore the policy afterwards with `docker compose up -d --force-recreate --wait`.
 
 If either cannot recover automatically, the spec permits the alternative but requires it be stated plainly: capture what `docker compose logs` reports and document the required reset in `README.md`. Silent corruption, or a hang with no explanation, is the failure this scenario exists to rule out.
 

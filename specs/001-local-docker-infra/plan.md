@@ -59,7 +59,7 @@ Re-evaluated against the design recorded in `research.md`, `data-model.md`, and 
 - **Readiness checks** are single built-in commands (`rabbitmq-diagnostics check_port_connectivity`, `pg_isready -h 127.0.0.1`), not a custom health script — Principle V holds, and FR-010's "actually accepts connections" is satisfied because both check the TCP listener.
 - **Missing-configuration detection** uses Compose's own `${VAR:?message}` syntax rather than a preflight validation script — the edge case is covered by the tool, so no new layer appears.
 
-One deliberate deviation from the spec's literal wording, which is a tightening rather than a violation: `.env.example` ships a non-blank development password, so copying it yields a working environment as FR-006 requires, while `${VAR:?}` guards still catch an empty or truncated `.env`. The spec's Assumptions section explicitly accepts development-grade default credentials in the committed example.
+One point worth stating because it looks like a conflict and is not: `.env.example` ships a non-blank development password. That is what FR-006 asks for — "working development defaults", so that copying the file is the only preparation step — and the spec's Assumptions section explicitly accepts development-grade default credentials in the committed example. The `${VAR:?}` guards are not weakened by it: they catch an empty, truncated, or absent `.env`, which is the case they exist for. No deviation from the spec is involved.
 
 ## Project Structure
 

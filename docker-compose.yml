@@ -32,6 +32,7 @@ services:
       RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:?RABBITMQ_DEFAULT_VHOST is not set - copy .env.example to .env}
     ports:
       - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     healthcheck:
       test:
         - CMD-SHELL

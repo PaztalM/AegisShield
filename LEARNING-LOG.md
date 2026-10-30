@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** the planning is complete and implementation has *just* started. Six of the 44 tasks are done — the configuration file and an empty skeleton of `docker-compose.yml` exist, but **neither RabbitMQ nor PostgreSQL is defined yet**, so there is still nothing to run. Section 10 states the exact position. Sections 1–9 explain the reasoning that got us here.
+> **The single most important thing to understand right now:** 25 of the 45 tasks are done. User Stories 1 and 2 work — one command brings up a healthy RabbitMQ and a healthy PostgreSQL, and the broker's web interface is published. But **the volumes are not mounted yet** (T026–T028, User Story 3), so **stopping the environment still destroys your data**. Section 10 states the exact position and explains why. Sections 1–9 explain the reasoning that got us here.
 
 ---
 
@@ -287,7 +287,7 @@ Five files from `/speckit-plan`:
 
 ### Step 4 — Wrote the task list *(this conversation, NOT yet committed)*
 
-`specs/001-local-docker-infra/tasks.md` — **44 numbered tasks**, T001 through T044, grouped into six phases.
+`specs/001-local-docker-infra/tasks.md` — **44 numbered tasks**, T001 through T044, grouped into six phases. *(Now 45: the 2026-10-30 analysis entry added T045.)*
 
 I read all seven documents above first, then derived the tasks from them. Each task names its exact file and quotes its constraints verbatim, so no decision gets re-made at implementation time.
 
@@ -300,7 +300,7 @@ The phases:
 | 3 — User Story 1 | T007–T020 | Both services defined and verified working. **This is the MVP.** |
 | 4 — User Story 2 | T021–T025 | The RabbitMQ web interface |
 | 5 — User Story 3 | T026–T032 | Volumes, data survival, the reset command |
-| 6 — Polish | T033–T044 | Edge cases, audits, final checks, update this log |
+| 6 — Polish | T033–T045 | Edge cases, audits, final checks, re-measure the timings, update this log |
 
 **MVP** = Minimum Viable Product: the smallest version that is genuinely useful. Here, finishing Phase 3 means you can start writing the Producer and Worker. Phases 4 and 5 make life nicer but you aren't blocked without them.
 
@@ -662,22 +662,22 @@ AegisShield/
     ├── plan.md                        ← committed; HOW we'll do it
     ├── research.md                    ← committed; decisions + rejected options
     ├── data-model.md                  ← committed; exact field values
-    ├── quickstart.md                  ← committed; 12 verification scenarios
+    ├── quickstart.md                  ← committed; 16 verification scenarios
     ├── contracts/                     ← committed; variables, endpoints, commands
     ├── checklists/requirements.md     ← committed; spec quality checklist
-    └── tasks.md                       ← committed; the 44 numbered tasks
+    └── tasks.md                       ← committed; the 45 numbered tasks
 ```
 
-### Task progress: 20 of 44 done
+### Task progress: 25 of 45 done
 
 | Phase | Tasks | Status |
 |---|---|---|
 | 1 — Setup | T001–T003 | ✅ complete |
 | 2 — Foundational | T004–T006 | ✅ complete |
 | 3 — User Story 1: one-command start 🎯 MVP | T007–T020 | ✅ complete |
-| 4 — User Story 2: management interface | T021–T025 | ⬜ not started |
+| 4 — User Story 2: management interface | T021–T025 | ✅ complete |
 | 5 — User Story 3: data across restarts | T026–T032 | ⬜ not started |
-| 6 — Polish & cross-cutting | T033–T044 | ⬜ not started |
+| 6 — Polish & cross-cutting | T033–T045 | ⬜ not started |
 
 ### What this means in practice
 
@@ -693,11 +693,14 @@ aegisshield-rabbitmq-1   rabbitmq   Up (healthy)            0.0.0.0:5672->5672/t
 
 Both components were then verified by doing real work rather than by trusting the word "healthy": a `psql` query confirmed the named database and its owning account were created on first start with no init script (T018), and a durable queue was declared and listed through the broker's own tooling (T017).
 
-Three things are deliberately still absent, and each is a task rather than an oversight:
+The management interface arrived with User Story 2 and is now published too: `http://localhost:15672`, same account as AMQP, no `guest`.
 
-- **No management port.** The web interface at `localhost:15672` is documented in `README.md` but not yet published — T021.
-- **No volume mounts.** Both services currently write into anonymous volumes that Docker invents on the fly, so data survives by accident rather than by design — T026 and T027.
+Two things are still absent, and each is a task rather than an oversight:
+
+- **No volume mounts.** This is the important one. Both services currently write into *anonymous* volumes — storage Docker invents on the fly because the official images declare a `VOLUME` for their data directory. Anonymous volumes are not reused: `docker compose down` orphans the old one, and the next `up` attaches a brand-new empty one. So **data does not survive a stop today** — PostgreSQL re-runs `initdb` and the broker initializes an empty node every time. T026 and T027 attach the two *named* volumes instead, which Compose does reuse by name. (This is also why T020's warm-start timing is provisional; see the 2026-10-30 entry.)
 - **No fixed broker `hostname:`.** Today's node name was `rabbit@a339da951fd6`, derived from a random container hostname. Durable queues will appear to vanish across a restart until T028 pins it.
+
+New term: an **anonymous volume** is a Docker volume with no name you chose, created automatically to back a path the image marked as needing storage. A **named volume** is one declared in the `volumes:` section and attached by name, so the same storage is found again on the next start. The difference between them is the whole of User Story 3.
 
 ### Files that still do NOT exist
 
@@ -721,11 +724,11 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 ### Immediately
 
-**T021** is the next unticked task: publish the broker's management port as `"${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"`, which opens the web interface and begins User Story 2. The image is already the `-management-alpine` variant, chosen back in T011 precisely so that this story needs a port mapping and nothing else — no custom image, no plugin-enable step.
+**T026** is the next unticked task, and User Story 3 is where the real substance left in this feature lives: mount the two named volumes (T026, T027), pin the broker's `hostname:` (T028), then prove it with the five-cycle restart test (T030) and the five-cycle reset test (T031). Until T026 and T027 land, stopping the environment loses your data — see section 10 for why anonymous volumes do not save you.
 
-User Story 2 then continues with a restart (T022), hand administration through the interface (T023), and confirming that signing in as `guest` is rejected (T024) — which today's `Not_Authorized` result has already most of the way proven.
+Then Phase 6: the three read-only audits (T033–T035), the edge cases (T036–T041), the re-measurement of start-to-healthy timing against the finished configuration (T045), the README review (T042), the full quickstart run (T043), and this log's implementation entry (T044).
 
-After that, User Story 3 is the one with real substance left in it: the two named volume mounts and the fixed broker `hostname:`, followed by the five-cycle restart test that proves data actually survives.
+User Stories 1 and 2 are both done. One command brings up a healthy broker and a healthy database, and the broker's web interface is published with the project's own administrator account and no reachable `guest`.
 
 ### After this feature
 
@@ -847,6 +850,73 @@ Alphabetical, for when a term shows up and you've forgotten it.
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
 
+### 2026-10-30 — User Story 2, and a second `/speckit-analyze` that found four real defects
+
+**What:** Two pieces of work in one entry, because the second was prompted by the first.
+
+1. **User Story 2 is built and complete** — T021 through T025. The broker's web management interface is published on host port `15672`, reachable at `http://localhost:15672`, and `README.md` gained a section covering it. Queues, message rates, and connections are visible; a queue can be created and purged by hand from the Queues tab. T024 confirmed the stock `guest` account does not exist in this environment — setting `RABBITMQ_DEFAULT_USER` and `RABBITMQ_DEFAULT_PASS` makes the image create the project's own administrator *instead of* `guest`, rather than creating `guest` and then removing it, so there is no window in which the default account is reachable.
+2. **Ran `/speckit-analyze` again** over `spec.md`, `plan.md`, and `tasks.md`. It reported 13 findings: no CRITICAL, four HIGH, five MEDIUM, four LOW. Requirement coverage came back clean — all 20 functional requirements and all 10 success criteria have at least one task — so every finding was about *correctness of the documents*, not holes in them. All 13 are now fixed. The four HIGH ones are the interesting ones and each taught something.
+
+---
+
+**HIGH 1 — A verification step that could never observe what it claimed.** T041 exists to prove the "unclean shutdown" edge case: kill the environment outright, start it again, confirm nothing was lost. It said to run `docker compose kill`, then check `docker compose ps` shows the containers *exited*, then start them.
+
+That check cannot pass. Both services set `restart: unless-stopped`, and Docker's restart policy fires on **any** non-zero exit — a kill included. The containers come back on their own, before you can type the next command. `quickstart.md` Scenario 16 had the same instruction and the same comment (`# containers exited, not stopped cleanly`).
+
+New term: a **restart policy** is a standing instruction to the Docker daemon about what to do when a container's main process exits. `unless-stopped` means "start it again, unless I stopped it deliberately with `docker stop`". A kill is not a deliberate stop, so the policy applies.
+
+The fix had two candidate shapes and the choice matters:
+
+| Option | Verdict |
+|---|---|
+| Remove `restart: unless-stopped` so containers stay dead after a kill | **Rejected.** The policy is the feature that makes the laptop-lid case *work* — close the lid, reopen it, your environment is running. Deleting a useful behaviour to make a test convenient is backwards. |
+| Keep the policy; fix the test to assert what the spec actually requires | **Chosen.** The spec says "the next start must recover without manual repair of stored state". It is about state surviving, not about who issues the start. |
+
+T041 and Scenario 16 now expect the containers to come back by themselves, wait for health, and assert the row and the durable queue survived. Both also describe a second pass with the policy suspended (`docker update --restart=no $(docker compose ps -q)`), so the developer-initiated path is covered too — belt and braces, since both paths are real.
+
+**The lesson:** a test that asserts a state your own configuration prevents will fail for a reason that has nothing to do with the thing under test, and whoever hits it will spend an hour on PostgreSQL recovery before noticing the restart policy. Write down what the configuration will *do*, not what the scenario name suggests.
+
+---
+
+**HIGH 2 — Two tasks fighting over the same test data.** T041 said "with data written per T030". But T030 ended with "Drop `quickstart_check` when finished", and T031 — which sits between them — runs `docker compose down -v` five times, destroying both volumes. So T041's data was guaranteed gone three different ways. A note in the dependency section tried to patch this with "run T041 before any `down -v`", which contradicted the task numbering it appeared next to.
+
+Fixed by making T041 write its own state before it kills anything, which removes the dependency instead of sequencing around it, and by deleting the stale ordering note. T030 and `quickstart.md` Scenario 5 no longer drop the table either — Scenario 6's `down -v` is what removes it, and that removal is precisely what Scenario 6 sets out to prove.
+
+**The lesson:** **a shared-state dependency between two tests is a bug even when the ordering works.** It couples them, it breaks silently when anything is inserted between them, and the fix — have each test set up what it needs — is cheaper than the note explaining the ordering.
+
+---
+
+**HIGH 3 and 4 — The measurement, and the wrong conclusion drawn from it.** T020 measured start-to-healthy timing and passed comfortably: 50.5s cold against a 5-minute budget, 14.5s warm against 60s. Both numbers were taken during User Story 1 — **before T026–T028 mount the volumes**, which is User Story 3 and still unbuilt.
+
+That matters more than it sounds. With no volume mounted, PostgreSQL's data directory lives inside the container, `docker compose down` destroys it, and the next start builds it again from scratch. So the "warm" run was not doing what a developer's warm start does. Two consequences:
+
+- The figures do not describe the finished environment. **T045** is now added to Phase 6 to re-measure once the volumes are in, and that run is what settles SC-001 and SC-002. T020's text now marks its own numbers provisional — a task recording a result that will change should say so.
+- The entry below drew a specific conclusion from those numbers that does not hold: it read the 2.3s gap between the cold (8.4s) and warm (6.1s) PostgreSQL timings as the cost of first-time database initialization. It isn't. `initdb` ran on *both* runs, because both started from an empty data directory. Point 2 of that entry is now corrected in place, with the reasoning kept rather than quietly deleted.
+
+**The lesson, and it is the most general one here:** **a measurement is only as good as your model of what the measurement did.** Two numbers and a subtraction look like evidence. That subtraction was meaningless because both runs did the same work — and nothing in the numbers said so. Only knowing that no volume was mounted said so. Before trusting a difference between two runs, state what you believe differs between them, then check that it actually does.
+
+---
+
+**The nine smaller findings, grouped by what kind of problem they were:**
+
+| Finding | Fix |
+|---|---|
+| T016 and T040 both ran `rabbitmq-diagnostics check_alarms` and both cited Scenario 15 | Clause (c) removed from T016; T040 owns the disk-alarm check alone. Two places to update is one too many |
+| The "dependency temporarily unreachable → must retry" edge case had no requirement and no task | Annotated as deliberately deferred. The party that must retry is an application service and this feature ships none; what it owes is the *means* (healthchecks, `depends_on: service_healthy`), both delivered |
+| SC-008 needed "a contributor who has never seen the project" — this project has one maintainer | Restated as an audit of the documentation itself: every value the setup needs is written down, no step depends on something recorded nowhere. Timing a stranger is better evidence and is still taken when one is available, but it no longer blocks T042 |
+| US1's independent test says "a clean machine with container tooling only", then T017/T018 ask for a host AMQP and psql client | Left as-is in substance but noted: FR-018 constrains *starting* the environment, not verifying it. Host clients are test-time tooling |
+| SC-001's "typical broadband connection" was unmeasurable | Now "at least 50 Mbit/s", with the measured link speed recorded alongside the timing. The image pull dominates the cold number, so the link speed is part of the criterion or the criterion means nothing |
+| FR-001 said the environment "MUST define **exactly two** components" — which Principle IV makes false the moment the Producer and Worker land | Reworded to "the two components this feature delivers", with the ceiling point made explicit |
+| `plan.md` called the non-blank development password in `.env.example` a "deliberate deviation from the spec" | It is not a deviation — FR-006 *requires* working defaults and the Assumptions section accepts development-grade credentials. The false-conflict framing is gone |
+| `restart: unless-stopped` traced to no requirement (Principle V bans speculative configuration) | Traced in `data-model.md` to the "unclean shutdown (machine sleep, forced kill)" edge case it genuinely serves, with the testing consequence from HIGH 1 noted right there |
+| `spec.md` still said **Status: Draft** with half the feature built | Now "In implementation", with which stories are done |
+
+**Why `/speckit-analyze` earns its keep.** Every one of these documents was reviewed when it was written and each was fine *on its own*. The defects were all in the **joins** — a task relying on data another task deletes, a test asserting a state the configuration forbids, a conclusion resting on a run that did not do what it appeared to. Nothing finds those except reading the artifacts against each other, deliberately, with the implementation in view. A second pass over documents you believe are finished is not wasted effort; it is where this class of bug lives.
+
+**What does NOT exist yet:** User Story 3 in full — the volume mounts (T026, T027), the fixed broker hostname (T028), and every persistence and reset verification (T029–T032). Until T026–T028 land, **stopping the environment still destroys your data**, which is the opposite of what the spec requires and the single most important thing to know about the current state. Also outstanding: all of Phase 6 (T033–T045), the Producer, the Worker, any schema, any message topology, and any application code at all.
+
+**State:** 25 of 45 tasks done — T001–T025 complete, T026–T045 remaining. User Stories 1 and 2 both work end to end. The task count rose from 44 to 45 because this analysis added T045.
+
 ### 2026-10-23 (end of day) — User Story 1 is finished and measured
 
 **What:** Implemented T009–T019 and measured T020. The environment now starts with one command, both components report healthy before that command returns, and `README.md` documents how to operate it. Everything is committed and pushed — `99ca09a` on `dev`, the first commit since the planning phase.
@@ -856,7 +926,7 @@ Newest first. Each entry is one unit of work, as Principle VI requires.
 | Run | Budget | Measured | Headroom |
 |---|---|---|---|
 | Cold — images deleted, volumes discarded (SC-001) | under 5 min | **50.5s** | 83% |
-| Warm — images cached, volumes kept (SC-002) | under 60s | **14.5s** | 76% |
+| Warm — images cached (SC-002) | under 60s | **14.5s** | 76% |
 
 Per container, as Compose reported them:
 
@@ -869,7 +939,11 @@ Per container, as Compose reported them:
 
 1. **The cold run was mostly downloading.** The two image pulls took 33.5s and 23.3s, concurrently, so roughly two thirds of the 50.5s was network. That is a property of the internet connection, not of anything we wrote — which is exactly why SC-001's budget is generous and SC-002's is the one that measures our own choices.
 
-2. **`initdb` is far cheaper here than `research.md` predicted.** postgres reached healthy at 8.4s cold (including creating the account, the database, and the data directory) and 6.1s warm. So first-time initialization cost about **2 seconds**, not the 10–20s that section 2 of `research.md` assumed. `start_period: 30s` is therefore very generous — and it stays. An over-generous grace period costs nothing, because a healthcheck that succeeds inside it marks the service healthy immediately. `start_period` is not a delay; it is suspended judgment.
+2. **`initdb` is cheap — but this pair of runs cannot say how cheap.** postgres reached healthy at 8.4s cold and 6.1s warm, and the first version of this entry read the 2.3s difference as the cost of first-time initialization. That inference was wrong, and the reason is worth keeping: **at the time of this measurement the volumes were declared but not yet mounted** (T026–T028 belong to User Story 3, which had not been built). Without a mount, the data directory lives in the container's writable layer, `docker compose down` destroys it, and the next `up` creates a fresh container — so `initdb` ran on the *warm* run too. Both numbers include it; the 2.3s gap is pull/layer-extraction residue and run-to-run variance, not initialization cost.
+
+   What the runs do establish: `initdb` plus a healthy TCP listener together cost well under 8.4s, comfortably inside `start_period: 30s`, which is what the grace period was sized to cover. So the conclusion stands even though the arithmetic behind it did not — `start_period: 30s` is generous and it stays. An over-generous grace period costs nothing, because a healthcheck that succeeds inside it marks the service healthy immediately. `start_period` is not a delay; it is suspended judgment. Pricing initialization properly needs a warm start that actually reuses an initialized data directory, which is what **T045** was added to measure once the volumes are mounted.
+
+   The general lesson, which is the more valuable one: **a measurement is only as good as your model of what the measurement did.** Two numbers and a subtraction looked like evidence. The subtraction was meaningless because both runs did the same work, and nothing in the numbers themselves said so — only knowing that no volume was mounted said so. Before trusting a difference, state what you believe differs between the two runs, then check that it actually does.
 
 3. **RabbitMQ is the critical path, and the reason is visible in its number.** It was healthy at 14.1s warm, with `interval: 10s`. Docker waits one full interval before the *first* probe, so the earliest possible answer was 10s — and the probe then took about 4 more seconds to come back. Those 4 seconds are `rabbitmq-diagnostics` booting a short-lived Erlang VM, precisely what Decision 2 claimed when it gave the broker a `timeout` that the database does not need. A prediction written during planning turned up in the measurement, which is most of the reason for writing predictions down.
 
