@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** 36 of the 45 tasks are done, and all three user stories are complete and verified. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and data provably survives a restart while `down -v` provably discards it. What is left is Phase 6: five more edge cases, a re-measurement of the timings, and the final review. One thing to know before you use this environment: **after a failed start, always `docker compose down` before retrying** — a bare retry can report a service healthy while its port is unpublished and unreachable from your host (see the T036 entry). Sections 1–9 explain the reasoning that got us here.
+> **The single most important thing to understand right now:** 39 of the 45 tasks are done, and all three user stories are complete and verified. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and data provably survives a restart while `down -v` provably discards it. What is left is two edge cases, a re-measurement of the timings, and the final review. One thing to know before you use this environment: **after a failed start, always `docker compose down` before retrying** — a bare retry can report a service healthy while its port is unpublished and unreachable from your host (see the T036 entry). Sections 1–9 explain the reasoning that got us here.
 
 ---
 
@@ -668,7 +668,7 @@ AegisShield/
     └── tasks.md                       ← committed; the 45 numbered tasks
 ```
 
-### Task progress: 36 of 45 done
+### Task progress: 39 of 45 done
 
 | Phase | Tasks | Status |
 |---|---|---|
@@ -677,7 +677,7 @@ AegisShield/
 | 3 — User Story 1: one-command start 🎯 MVP | T007–T020 | ✅ complete |
 | 4 — User Story 2: management interface | T021–T025 | ✅ complete |
 | 5 — User Story 3: data across restarts | T026–T032 | ✅ complete |
-| 6 — Polish & cross-cutting | T033–T045 | 🟨 audits done (T033–T035), port conflict done (T036); five edge cases and the final review outstanding |
+| 6 — Polish & cross-cutting | T033–T045 | 🟨 audits and four edge cases done (T033–T039); T040, T041, the re-measurement and the final review outstanding |
 
 ### What this means in practice
 
@@ -726,7 +726,7 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 ### Immediately
 
-**T037** is the next unticked task. All three user stories are complete and verified, and the first three Phase 6 audits are done: no committed secret and no hard-coded value (T033), exact nine-for-nine variable parity between `docker-compose.yml` and `.env.example` (T034), and both images pinned to the most specific tag their projects publish (T035). The first edge case, the port conflict (T036), is also done — it fails in about 2 seconds naming the port, and the `POSTGRES_PORT` override relocates the database without touching `docker-compose.yml`. What is left is the five remaining edge cases and the final review.
+**T040** is the next unticked task. All three user stories are complete and verified, and the first three Phase 6 audits are done: no committed secret and no hard-coded value (T033), exact nine-for-nine variable parity between `docker-compose.yml` and `.env.example` (T034), and both images pinned to the most specific tag their projects publish (T035). Four edge cases are done too: the port conflict fails in about 2 seconds naming the port and the `POSTGRES_PORT` override relocates the database without touching `docker-compose.yml` (T036); missing configuration is refused before any container is created, naming every missing variable (T037); a frozen database is reported `unhealthy` and `up -d --wait` refuses to claim success (T038); and a throwaway service joined the environment, waited for both healthchecks and reached both components by internal DNS with zero edits to their definitions (T039). What is left is T040, T041, the re-measurement and the final review.
 
 The remaining Phase 6 work: the edge cases one at a time — a port conflict (T036), missing configuration (T037), a frozen container that must never be reported healthy (T038), the extension point for a future service (T039), the broker's disk alarm (T040), and recovery from an unclean shutdown (T041) — then the re-measurement of start-to-healthy timing against the finished configuration (T045), the README review (T042), the full 16-scenario quickstart run (T043), and this log's implementation entry (T044).
 
@@ -851,6 +851,97 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-30 (night) — Three edge cases, all passing, and one estimate that was wrong in a useful way
+
+**What:** T037, T038 and T039. All three pass. No configuration changed; the only edits were one corrected estimate and the task records themselves. 39 of 45.
+
+---
+
+**T037 — missing configuration. Passes, and more informatively than the task expected.**
+
+With `.env` moved aside entirely, `docker compose up -d --wait` exits 1 and prints:
+
+```text
+error while interpolating services.postgres.environment.POSTGRES_DB: required variable POSTGRES_DB is missing a value: POSTGRES_DB is not set - copy .env.example to .env
+... the same for POSTGRES_PASSWORD, POSTGRES_USER,
+    RABBITMQ_DEFAULT_PASS, RABBITMQ_DEFAULT_USER, RABBITMQ_DEFAULT_VHOST
+```
+
+Six errors, one per required variable, each carrying the pointer to `.env.example`. **No container was created** — the failure happens during interpolation, before Compose touches the Docker daemon at all.
+
+The task asked for "an error naming the **first** missing required variable". Compose names all six, which is better: a developer fixes one `.env` in one pass instead of rediscovering the next missing variable on each retry. The task text now records the real behaviour.
+
+With a single variable commented out (`#POSTGRES_PASSWORD=...`), the error names `POSTGRES_PASSWORD` and nothing else. That is the specific thing this edge case exists to prevent: without the `${VAR:?message}` guards, a missing password would reach the image and surface later as an opaque authentication failure from PostgreSQL, which tells the developer nothing about where to look.
+
+I added a check the task did not ask for, because the contract defines **two tiers** of variable and only one was being tested. Commenting out `POSTGRES_PORT` — a *defaulted* variable, `${POSTGRES_PORT:-5432}` — correctly did **not** fail: the start exited 0 and published 5432 from the default. So the required tier fails loudly and the defaulted tier falls back silently, exactly as `contracts/environment-variables.md` specifies. Testing only the required tier would have left half the design unverified.
+
+`.env` was backed up outside the repository during this, and confirmed byte-identical afterwards with `diff`. Keeping the backup in the scratch directory rather than the working tree matters: a file named `.env.bak` in the repository is **not** matched by the `.gitignore` entry for `.env`, so a careless `git add -A` would commit it.
+
+---
+
+**T038 — an unhealthy component is never reported healthy. Passes.**
+
+The technique is to freeze the server without stopping the container, so that Docker still sees a running process while nothing inside answers:
+
+```
+docker compose kill -s SIGSTOP postgres
+```
+
+New term: **SIGSTOP** suspends a process without terminating it. The container stays in `running` state because its main process still exists — it is simply not executing. This is the right test for FR-019 precisely because every cheap signal of health still looks fine: the container is up, the process is there, nothing crashed. Only an actual connection attempt can tell.
+
+| Observation | Result |
+|---|---|
+| Container state while frozen | `running` throughout |
+| Health state | `healthy` → **`unhealthy` after 41s** |
+| `docker compose up -d --wait` while frozen | **exit 1** — did not claim success |
+| After `kill -s SIGCONT` | back to `healthy` |
+
+The important line is the third. A developer who runs the documented start command against a broken environment gets a non-zero exit, not a false "ready".
+
+**The estimate that was wrong.** T010 recorded that after `start_period` elapses, "5 failures at 5s mark the service unhealthy within ~25s". The measurement says **41s**. The arithmetic behind ~25s was `retries × interval` = 5 × 5s, which assumes each failed check returns instantly. Against a *frozen* server it does not: `pg_isready` opens a TCP connection and waits, so each round costs roughly `timeout + interval` — 5s + 5s — giving something near 40–50s. Against a *crashed* server the original estimate would be right, because a refused connection fails immediately.
+
+So the figure was not wrong so much as unlabelled: it was the best case stated as if it were the only case. T010 now carries both numbers and the reason they differ. Neither threatens FR-019, which asks only that an unhealthy component be reported as such, with no deadline.
+
+**The lesson:** **`timeout` only costs you anything when a check hangs, which is exactly the situation you wrote it for.** It is easy to reason about healthcheck timing using `interval` and `retries` alone, because in the common case — a check that fails fast — `timeout` never comes into play. The one scenario where it dominates is the one the healthcheck exists to catch.
+
+---
+
+**T039 — the extension point. Passes, and this is the one that matters for what comes next.**
+
+FR-015 and SC-010 promise that adding the first application service later will need **no change** to the broker and database definitions. That is a promise about the future, so it has to be tested now, on a scratch copy — never the committed file.
+
+The scratch stack held the two infrastructure services verbatim plus one throwaway `probe` service declaring `depends_on` with `condition: service_healthy` on both. Running it from a fully stopped environment:
+
+```text
+Container aegisshield-rabbitmq-1  Waiting
+Container aegisshield-postgres-1  Waiting
+Container aegisshield-postgres-1  Healthy
+Container aegisshield-rabbitmq-1  Healthy
+Container aegisshield-probe-1     Starting
+-- up -d returned after 16s --
+
+probe exit code: 0
+172.18.0.3   postgres
+172.18.0.2   rabbitmq
+postgres:5432 reachable
+rabbitmq:5672 reachable
+query over internal dns ok
+PROBE_OK
+```
+
+The probe resolved both services by their internal DNS names, reached both internal ports, and ran a real `psql` query through `postgres:5432` — never through a published host port. The `Waiting` → `Healthy` → `Starting` sequence is `depends_on` doing its job: the probe did not run until both dependencies passed their healthchecks, which is the entire reason the healthchecks were specified as connection tests rather than process checks.
+
+Two deliberate precautions, each of which caught or prevented a problem:
+
+- **The scratch file was placed outside the repository and run with an explicit `-p aegisshield` project name.** Compose derives the project name from the compose file's directory, so without `-p` this would have become a *second* project named after the scratch directory, creating duplicate containers that then collided on ports 5432 and 5672. The `--env-file` had to be given explicitly for the same reason: Compose looks for `.env` beside the compose file.
+- **The two services in the scratch copy were compared line-by-line against the committed ones.** This caught a real error: the first draft had silently omitted the `rabbitmq-data` volume mount. Had it run that way the probe would still have printed `PROBE_OK`, and T039 would have "passed" while testing a configuration the project does not have. The comparison now runs as part of the task, so "zero edits" is demonstrated rather than claimed.
+
+That second point generalises: **a test of "X works unchanged" is worthless unless you verify X is actually unchanged.** The interesting part of T039 was never whether a container can resolve a DNS name — it was whether *this* environment supports extension without modification, and that claim lives entirely in the equality between the two files.
+
+---
+
+**State:** 39 of 45. `docker-compose.yml` has not changed since T028; everything since has been verification and documentation. Remaining: T040 (the broker's disk alarm), T041 (unclean shutdown), T045 (re-measure timings against the final configuration), T042 (README review), T043 (the full 16-scenario quickstart run), T044 (this log's implementation entry).
 
 ### 2026-10-30 (evening) — The port-conflict test, a healthy service nobody could reach, and a stopwatch that measured typing
 
