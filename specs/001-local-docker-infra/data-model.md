@@ -34,7 +34,7 @@ The single declarative description of the local stack. One instance: `docker-com
 | Field | Value | Rule |
 |---|---|---|
 | Service name | `rabbitmq` | Also the internal DNS name services connect to (FR-014) |
-| Image | `rabbitmq:4.2.4-management-alpine` | Full `major.minor.patch` pin; `-management` variant required for User Story 2 |
+| Image | `rabbitmq:4.2.4-management-alpine` | Exact, non-floating pin - three-part semver here, unlike PostgreSQL; `-management` variant required for User Story 2 |
 | Container hostname | fixed, e.g. `aegisshield-rabbitmq` | MUST be set. Stabilizes the Erlang node name so the Mnesia directory inside the volume survives container recreation (FR-011, scenario 3.1) |
 | Published messaging port | `${RABBITMQ_PORT:-5672}` → container `5672` | Host side overridable; container side fixed (FR-002, FR-004) |
 | Published management port | `${RABBITMQ_MANAGEMENT_PORT:-15672}` → container `15672` | Same rule (FR-002, FR-004) |
@@ -73,7 +73,7 @@ absent ──up──> created ──> starting (healthcheck failing, within sta
 | Field | Value | Rule |
 |---|---|---|
 | Service name | `postgres` | Also the internal DNS name (FR-014) |
-| Image | `postgres:18.4-alpine` | Full `major.minor.patch` pin (FR-013) |
+| Image | `postgres:18.4-alpine` | Exact, non-floating pin (FR-013). `18.4` is PostgreSQL's complete version - since v10 it versions as major.patch, and no `18.4.0` tag exists |
 | Published port | `${POSTGRES_PORT:-5432}` → container `5432` | Host side overridable; container side fixed (FR-003, FR-004) |
 | Owning account | `POSTGRES_USER` / `POSTGRES_PASSWORD` | Created on first start; owns the application database (FR-009) |
 | Application database | `POSTGRES_DB` | Created empty on first start, no manual step and no init script (FR-009) |

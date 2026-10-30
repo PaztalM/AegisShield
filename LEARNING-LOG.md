@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** 29 of the 45 tasks are done. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and both named volumes are now mounted — so a stop no longer discards the data. What is **not yet proven** is that the data survives: nothing has written a row, stopped, started again and found it still there. That is T030, and until it passes, persistence is an expectation rather than a measured fact. Section 10 states the exact position and explains why. Sections 1–9 explain the reasoning that got us here.
+> **The single most important thing to understand right now:** 35 of the 45 tasks are done, and all three user stories are complete and verified. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and data now provably survives a restart — measured over five stop/start cycles, with the reset path measured over five more. What is left is Phase 6: edge cases, audits, a re-measurement of the timings, and the final review. Section 10 states the exact position. Sections 1–9 explain the reasoning that got us here.
 
 ---
 
@@ -668,7 +668,7 @@ AegisShield/
     └── tasks.md                       ← committed; the 45 numbered tasks
 ```
 
-### Task progress: 29 of 45 done
+### Task progress: 35 of 45 done
 
 | Phase | Tasks | Status |
 |---|---|---|
@@ -676,8 +676,8 @@ AegisShield/
 | 2 — Foundational | T004–T006 | ✅ complete |
 | 3 — User Story 1: one-command start 🎯 MVP | T007–T020 | ✅ complete |
 | 4 — User Story 2: management interface | T021–T025 | ✅ complete |
-| 5 — User Story 3: data across restarts | T026–T032 | 🟨 configuration done (T026–T029); verification outstanding (T030–T032) |
-| 6 — Polish & cross-cutting | T033–T045 | ⬜ not started |
+| 5 — User Story 3: data across restarts | T026–T032 | ✅ complete |
+| 6 — Polish & cross-cutting | T033–T045 | 🟨 audits done (T033–T035); edge cases and final review outstanding |
 
 ### What this means in practice
 
@@ -726,11 +726,11 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 ### Immediately
 
-**T030** is the next unticked task. User Story 3's configuration is in — the two named volumes are mounted (T026, T027), the broker's `hostname:` is pinned (T028), and Docker creates both volumes unaided (T029). What is left is the proof: the five-cycle restart test (T030), the five-cycle reset test (T031), and the README section documenting both (T032). Note the distinction: the data is no longer *discarded* on a stop, but that it genuinely *returns* is not yet measured — that is exactly what T030 settles.
+**T036** is the next unticked task. All three user stories are complete and verified, and the first three Phase 6 audits are done: no committed secret and no hard-coded value (T033), exact nine-for-nine variable parity between `docker-compose.yml` and `.env.example` (T034), and both images pinned to the most specific tag their projects publish (T035). What is left is the edge cases.
 
-Then Phase 6: the three read-only audits (T033–T035), the edge cases (T036–T041), the re-measurement of start-to-healthy timing against the finished configuration (T045), the README review (T042), the full quickstart run (T043), and this log's implementation entry (T044).
+The remaining Phase 6 work: the edge cases one at a time — a port conflict (T036), missing configuration (T037), a frozen container that must never be reported healthy (T038), the extension point for a future service (T039), the broker's disk alarm (T040), and recovery from an unclean shutdown (T041) — then the re-measurement of start-to-healthy timing against the finished configuration (T045), the README review (T042), the full 16-scenario quickstart run (T043), and this log's implementation entry (T044).
 
-User Stories 1 and 2 are both done. One command brings up a healthy broker and a healthy database, and the broker's web interface is published with the project's own administrator account and no reachable `guest`.
+All three user stories are done. One command brings up a healthy broker and a healthy database; the broker's web interface is published with the project's own administrator account and no reachable `guest`; and data survives a stop while `down -v` provably discards it, each measured over five consecutive cycles.
 
 ### After this feature
 
@@ -851,6 +851,98 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-30 (later still) — User Story 3 is proven, and the three audits found a requirement that could not be met
+
+**What:** T030 through T035. User Story 3 is complete and the first three Phase 6 audits are done. 35 of 45 tasks.
+
+---
+
+**T030 and T031: persistence stopped being an assumption.**
+
+Up to this point the volumes were mounted and a clean start worked, but nothing had actually written data, stopped the environment, started it again and looked. These two tasks did that, ten cycles in total.
+
+| Test | Cycles | Result |
+|---|---|---|
+| T030 — data survives `docker compose down` | 5 | Row present and durable queue still declared, 5 of 5 |
+| T031 — `docker compose down -v` truly resets | 5 | No leftover volume, no tables, no queues, 5 of 5, no manual repair |
+
+That settles **SC-005** and **SC-006**, and acceptance scenarios 3.1, 3.2 and 3.3.
+
+The ten cycles also produced an incidental result worth keeping: start-to-healthy times barely moved. PostgreSQL reached healthy in 6.3–7.2s every time and RabbitMQ in 13.7–14.8s, whether the volume was being reused or created from scratch. The consistency is the interesting part — it means `initdb` and a first-boot Erlang node are not meaningfully slower than reattaching to existing storage at this data volume. It does **not** discharge T045, which still owes a proper cold measurement with the images removed; this is a side observation from runs that were not set up to measure timing.
+
+A practical note that cost a command during T030: **Windows PowerShell strips the inner double quotes** when it passes arguments to `docker.exe`. So this fails —
+
+```
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -c "CREATE TABLE t (id int);"'
+```
+
+— because `psql` receives only `CREATE` and reports `syntax error at end of input`. Piping the SQL in on standard input keeps it off the command line entirely and works:
+
+```
+'CREATE TABLE t (id int);' | docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+Earlier commands in this project were unaffected only by luck: their quoted values (`aegis`, `aegisshield`) contain no spaces, so losing the quotes changed nothing. This is now documented in `README.md` under "Running SQL from PowerShell on Windows", because every `psql` example here hits it on Windows and SC-008 says a contributor should not have to ask anyone for help.
+
+---
+
+**T033 — secrets and hard-coded values. Pass.**
+
+- `.env` is matched by `.gitignore` line 2, is not tracked, and **has never been committed in the repository's history** (checked with `git log --all --diff-filter=A`, not just the working tree — a file can be ignored today and still sit in an old commit forever).
+- `docker-compose.yml` contains no literal credential. The only match for a case-insensitive search of `passw|secret|token|credential` is `POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?...}` — a variable name and an error message, no value.
+- The only literals in the file are container-side ports (`:5432`, `:5672`, `:15672`), which are fixed by the images and are not configuration.
+
+One thing the audit surfaced that is worth stating rather than glossing: the literal string `aegis_dev_password` **is** in version control, in `.env.example`, in the `README.md` connection strings, and in several design documents. That is deliberate and not a finding. FR-006 requires the example file to yield a working environment when copied, SC-004 requires every value a developer needs to be readable from committed documentation, and the spec's Assumptions section explicitly accepts development-grade credentials in the committed example. The values are localhost-only and nothing is intended to be secret. SC-007's "zero secrets" means no *real* secret — not the absence of a development default that the spec asks for by name.
+
+I widened the audit beyond the command the task specified, which mattered: the task's own `grep -nE 'password|...'` is case-sensitive and would have sailed past `POSTGRES_PASSWORD` entirely. A case-sensitive search for a lowercase word is not an audit for credentials.
+
+---
+
+**T034 — variable parity. Pass, exactly.**
+
+Nine variables interpolated by `docker-compose.yml`, nine declared in `.env.example`, and the two sets are identical — nothing in the Compose file that the example omits, and nothing in the example that the Compose file never reads. No speculative tenth variable, which is Principle V.
+
+I compared the two sets programmatically rather than reading them side by side. Nine against nine is small enough to eyeball, and eyeballing is exactly how you miss one.
+
+---
+
+**T035 — image pins. The configuration passes; the task's own requirement could not be satisfied.**
+
+T035 required each image to carry "a full `major.minor.patch` tag — no `latest`, no two-part tag, no floating reference". Checking that mechanically:
+
+| Image | Verdict |
+|---|---|
+| `rabbitmq:4.2.4-management-alpine` | Three-part. Passes. |
+| `postgres:18.4-alpine` | **Two-part. Fails as written.** |
+
+The instinct is to go find `postgres:18.4.0-alpine`. It does not exist:
+
+```
+$ docker manifest inspect postgres:18.4.0-alpine   -> not found
+$ docker manifest inspect postgres:18.4-alpine     -> resolves
+$ SHOW server_version;                             -> 18.4
+```
+
+**PostgreSQL changed its versioning scheme at version 10.** Before that, releases looked like `9.6.24` — three parts, where `9.6` together formed the major version. From 10 onwards the major version is a single integer and the second component is the patch level, so `18.4` means "major release 18, patch 4" and is already the complete version. There is no third number to pin. RabbitMQ, by contrast, uses ordinary three-part semver, so `4.2.4` is correct for it. The two dependencies simply do not have the same version shape.
+
+New term: a **floating tag** is one that points at different images over time — `latest`, or `postgres:18`, which moves as new patch releases land. The thing the requirement is actually protecting against is a tag whose meaning changes under you. `18.4-alpine` does not move.
+
+**And FR-013 was never the problem.** It says only: *"Every third-party image used MUST be pinned to an explicit version tag; floating tags such as `latest` MUST NOT be used."* Both images satisfy that completely. The `major.minor.patch` phrasing was never a requirement — it was a *restatement* of FR-013 that smuggled in an assumption about dot-counting, and it had spread to seven places across `research.md`, `data-model.md`, `plan.md`, `quickstart.md` and three tasks.
+
+All seven are now reworded to "the most specific tag its project publishes", with the per-project difference spelled out. T035 records that its original wording was unsatisfiable, and says to verify by resolving each tag with `docker manifest inspect` rather than by counting dots.
+
+**The lesson:** **a requirement restated in your own words is a new requirement, and it can be stricter than the one it came from.** FR-013 asked for something true and checkable. Somewhere between the spec and the research document it became `major.minor.patch`, which sounds like the same thing, is more precise, and is wrong for half the dependencies. Precision added during a restatement is not free — it has to be checked against reality like anything else.
+
+This is the second time in one day that an assumption about a dependency's conventions outlived its truth. The PostgreSQL 18 volume path was the first. Both were cases of writing down what the ecosystem used to look like; both were settled in seconds by asking the thing itself (`docker image inspect`, `docker manifest inspect`, `SHOW server_version`). The pattern is clear enough to name: **when a document states a fact about a dependency, that fact has a source, and the source is the dependency.**
+
+A smaller thing in the same family: the audit mechanically checked the tag *shape*, which is why this surfaced at all. Had the task been done by reading the two lines and nodding — both obviously pinned, neither saying `latest` — it would have passed and the contradiction would have stayed in six documents.
+
+---
+
+**State:** 35 of 45. All three user stories complete and verified. Remaining: T036–T041 (the edge cases — port conflict, missing configuration, a frozen container, the extension point, the disk alarm, unclean shutdown), T045 (re-measure timings against the final configuration), T042 (README review), T043 (the full 16-scenario quickstart run), T044 (this log's implementation entry).
+
+No configuration changed in this entry. T030–T035 were all verification, and the only edits were documentation corrections and the README additions.
 
 ### 2026-10-30 (later) — The volumes are mounted, and PostgreSQL 18 moved the path everyone has memorized
 

@@ -10,7 +10,7 @@ Verification environment: Windows 10 Pro, Docker 29.9.1, Docker Compose v5.6.0.
 
 ## 1. Image versions and pinning
 
-**Decision**: `rabbitmq:4.2.4-management-alpine` and `postgres:18.4-alpine`, both pinned to the full `major.minor.patch` tag.
+**Decision**: `rabbitmq:4.2.4-management-alpine` and `postgres:18.4-alpine`, both pinned to the most specific tag upstream publishes. Note the two projects version differently: RabbitMQ uses three-part semver (`4.2.4`), while PostgreSQL has used a two-part scheme since version 10, where the first number is the major release and the second is the patch level (`18.4` is complete - no `18.4.0` tag exists). The requirement is an exact, non-floating release, not a particular number of dots.
 
 **Rationale**: FR-013 forbids floating tags. A `4.2` or `18` tag is still floating across patch releases, so only a three-part tag actually pins the image. Both tags were confirmed to exist by `docker manifest inspect` on 2026-10-23, which also established the ceiling of each line — `rabbitmq:4.2.5-management-alpine` does not exist, so 4.2.4 is the current head of the 4.2 line:
 

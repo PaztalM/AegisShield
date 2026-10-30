@@ -215,7 +215,7 @@ Also confirm the two files agree (FR-006): every `${VAR}` in `docker-compose.yml
 grep -nE '^\s+image:' docker-compose.yml
 ```
 
-**Expected**: two lines, each a full `major.minor.patch` tag — `rabbitmq:4.2.4-management-alpine` and `postgres:18.4-alpine`. No `latest`, no two-part tag, no digest-less floating reference.
+**Expected**: two lines — `rabbitmq:4.2.4-management-alpine` and `postgres:18.4-alpine` — each the most specific tag its project publishes. No `latest` and no floating reference. Do **not** read this as "three dot-separated numbers": PostgreSQL versions as major.patch since v10, so `18.4` is already complete and `postgres:18.4.0-alpine` does not exist. RabbitMQ does use three-part semver, so `4.2.4` is right for it.
 
 ---
 
