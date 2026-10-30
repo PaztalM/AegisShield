@@ -131,7 +131,9 @@ An explicit `RABBITMQ_DEFAULT_VHOST` is set because the spec's Key Entities name
 
 ## 7. Persistence, and the node-name trap
 
-**Decision**: two named volumes; `postgres-data` → `/var/lib/postgresql/data`, `rabbitmq-data` → `/var/lib/rabbitmq`. The broker service additionally sets a fixed `hostname:`.
+**Decision**: two named volumes; `postgres-data` → `/var/lib/postgresql`, `rabbitmq-data` → `/var/lib/rabbitmq`. The broker service additionally sets a fixed `hostname:`.
+
+**The database path is version-sensitive, and the obvious value is wrong here.** `/var/lib/postgresql/data` is the path every pre-18 example uses, and it is the one this document first specified. The official PostgreSQL 18+ images changed the layout: `PGDATA` is now `/var/lib/postgresql/18/docker`, a major-version-specific subdirectory, and the declared `VOLUME` moved up to `/var/lib/postgresql` so that an eventual `pg_upgrade --link` does not have to cross a mount-point boundary. The image actively refuses to start when it finds a mount at the legacy path, printing `there appears to be PostgreSQL data in: /var/lib/postgresql/data (unused mount/volume)` — a deliberate guard, because that arrangement historically looked like an abandoned version upgrade and risked data loss. Since this feature pins `postgres:18.4-alpine`, the mount goes at `/var/lib/postgresql`. Confirm against any future image bump with `docker image inspect postgres:<tag>` rather than from memory.
 
 **Rationale**: FR-011 requires named persistent storage so that a stop and start preserves database contents and durable broker definitions, and FR-012 requires one documented command to discard it (`docker compose down -v`). Named volumes also satisfy acceptance scenario 3.3 — Docker creates them on first start with no manual preparation.
 

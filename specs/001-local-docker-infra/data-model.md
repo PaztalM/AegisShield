@@ -77,7 +77,7 @@ absent ──up──> created ──> starting (healthcheck failing, within sta
 | Published port | `${POSTGRES_PORT:-5432}` → container `5432` | Host side overridable; container side fixed (FR-003, FR-004) |
 | Owning account | `POSTGRES_USER` / `POSTGRES_PASSWORD` | Created on first start; owns the application database (FR-009) |
 | Application database | `POSTGRES_DB` | Created empty on first start, no manual step and no init script (FR-009) |
-| Volume mount | `postgres-data` → `/var/lib/postgresql/data` | The data directory (FR-011) |
+| Volume mount | `postgres-data` → `/var/lib/postgresql` | The directory the image declares as its volume. **Not `/var/lib/postgresql/data`** — that was the path for PostgreSQL 9-17. The 18+ images store the cluster in a major-version-specific subdirectory (`PGDATA=/var/lib/postgresql/18/docker`) and declare the volume one level up, so `pg_upgrade --link` need not cross a mount boundary; a mount at the legacy path makes the image refuse to start (FR-011) |
 | Readiness check | `pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"` | `-h 127.0.0.1` is required: a socket-only check passes during initialization, before the TCP listener exists (FR-010) |
 | Readiness timing | `interval: 5s`, `timeout: 5s`, `retries: 5`, `start_period: 30s` | Authoritative values — do not leave to implementation-time discretion. `pg_isready` is a cheap single connection attempt, so a 5s interval costs nothing and keeps detection granularity tight for SC-002's 60s warm start. `start_period: 30s` covers first-start `initdb`, which takes 10–20s; after it elapses, 5 failed checks at 5s mark the service unhealthy within ~25s (FR-010, FR-019, SC-002) |
 | Restart policy | `unless-stopped` | As above |
@@ -116,7 +116,7 @@ Two instances, both Docker named volumes created automatically on first start.
 
 | Instance | Mounted at | Holds | Lifecycle |
 |---|---|---|---|
-| `postgres-data` | `/var/lib/postgresql/data` | Data directory: the application database and its account | Survives `stop` and `down`; removed only by `down -v` (FR-011, FR-012) |
+| `postgres-data` | `/var/lib/postgresql` | Holds the cluster at `18/docker` within the mount: the application database and its account | Survives `stop` and `down`; removed only by `down -v` (FR-011, FR-012) |
 | `rabbitmq-data` | `/var/lib/rabbitmq` | Mnesia node directory: users, vhost, durable queue definitions, persistent messages | Same (FR-011, FR-020) |
 
 **Validation rules**:

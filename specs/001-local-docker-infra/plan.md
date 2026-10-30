@@ -16,7 +16,7 @@ Technical approach: one Compose file at the repository root declaring two servic
 
 **Primary Dependencies**: Docker Engine and Docker Compose v2+ on the host (prerequisite, not shipped). Images: `rabbitmq:4.2.4-management-alpine` and `postgres:18.4-alpine` — both tags verified present in the registry on 2026-10-23.
 
-**Storage**: Two Docker named volumes — one for the PostgreSQL data directory (`/var/lib/postgresql/data`), one for the RabbitMQ Mnesia directory (`/var/lib/rabbitmq`).
+**Storage**: Two Docker named volumes — one for the PostgreSQL data directory (`/var/lib/postgresql`, the path the 18+ images declare — the cluster itself sits at `18/docker` inside it), one for the RabbitMQ Mnesia directory (`/var/lib/rabbitmq`).
 
 **Testing**: Manual and scripted verification through the container tooling and standard clients, per `quickstart.md`. No test framework is added here; the automated integration test the constitution requires for the Producer → RabbitMQ → Worker → PostgreSQL path belongs to the feature that introduces those services and will run against this same Compose file.
 

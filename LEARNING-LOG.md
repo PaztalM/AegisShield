@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** 25 of the 45 tasks are done. User Stories 1 and 2 work — one command brings up a healthy RabbitMQ and a healthy PostgreSQL, and the broker's web interface is published. But **the volumes are not mounted yet** (T026–T028, User Story 3), so **stopping the environment still destroys your data**. Section 10 states the exact position and explains why. Sections 1–9 explain the reasoning that got us here.
+> **The single most important thing to understand right now:** 29 of the 45 tasks are done. One command brings up a healthy RabbitMQ and a healthy PostgreSQL, the broker's web interface is published, and both named volumes are now mounted — so a stop no longer discards the data. What is **not yet proven** is that the data survives: nothing has written a row, stopped, started again and found it still there. That is T030, and until it passes, persistence is an expectation rather than a measured fact. Section 10 states the exact position and explains why. Sections 1–9 explain the reasoning that got us here.
 
 ---
 
@@ -668,7 +668,7 @@ AegisShield/
     └── tasks.md                       ← committed; the 45 numbered tasks
 ```
 
-### Task progress: 25 of 45 done
+### Task progress: 29 of 45 done
 
 | Phase | Tasks | Status |
 |---|---|---|
@@ -676,7 +676,7 @@ AegisShield/
 | 2 — Foundational | T004–T006 | ✅ complete |
 | 3 — User Story 1: one-command start 🎯 MVP | T007–T020 | ✅ complete |
 | 4 — User Story 2: management interface | T021–T025 | ✅ complete |
-| 5 — User Story 3: data across restarts | T026–T032 | ⬜ not started |
+| 5 — User Story 3: data across restarts | T026–T032 | 🟨 configuration done (T026–T029); verification outstanding (T030–T032) |
 | 6 — Polish & cross-cutting | T033–T045 | ⬜ not started |
 
 ### What this means in practice
@@ -695,10 +695,12 @@ Both components were then verified by doing real work rather than by trusting th
 
 The management interface arrived with User Story 2 and is now published too: `http://localhost:15672`, same account as AMQP, no `guest`.
 
-Two things are still absent, and each is a task rather than an oversight:
+Both named volumes are now mounted (T026, T027) and the broker's hostname is pinned (T028), so the two gaps this section used to describe are closed. What remains in User Story 3 is proof rather than configuration: T030, T031 and T032.
 
-- **No volume mounts.** This is the important one. Both services currently write into *anonymous* volumes — storage Docker invents on the fly because the official images declare a `VOLUME` for their data directory. Anonymous volumes are not reused: `docker compose down` orphans the old one, and the next `up` attaches a brand-new empty one. So **data does not survive a stop today** — PostgreSQL re-runs `initdb` and the broker initializes an empty node every time. T026 and T027 attach the two *named* volumes instead, which Compose does reuse by name. (This is also why T020's warm-start timing is provisional; see the 2026-10-30 entry.)
-- **No fixed broker `hostname:`.** Today's node name was `rabbit@a339da951fd6`, derived from a random container hostname. Durable queues will appear to vanish across a restart until T028 pins it.
+The history is worth keeping, because it explains what the volumes are *for*:
+
+- **Before T026 and T027, there were no volume mounts.** Both services wrote into *anonymous* volumes — storage Docker invents on the fly because the official images declare a `VOLUME` for their data directory. Anonymous volumes are not reused: `docker compose down` orphaned the old one, and the next `up` attached a brand-new empty one. So **data did not survive a stop** — PostgreSQL re-ran `initdb` and the broker initialized an empty node every time. T026 and T027 attach the two *named* volumes instead, which Compose does reuse by name. (This is also why T020's warm-start timing is provisional; see the 2026-10-30 entry.)
+- **Before T028 there was no fixed broker `hostname:`.** The node name was `rabbit@a339da951fd6`, derived from a random container hostname; durable queues would appear to vanish across a restart. It is now `rabbit@aegisshield-rabbitmq`, and the Mnesia directory inside the volume is named after it.
 
 New term: an **anonymous volume** is a Docker volume with no name you chose, created automatically to back a path the image marked as needing storage. A **named volume** is one declared in the `volumes:` section and attached by name, so the same storage is found again on the next start. The difference between them is the whole of User Story 3.
 
@@ -724,7 +726,7 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 ### Immediately
 
-**T026** is the next unticked task, and User Story 3 is where the real substance left in this feature lives: mount the two named volumes (T026, T027), pin the broker's `hostname:` (T028), then prove it with the five-cycle restart test (T030) and the five-cycle reset test (T031). Until T026 and T027 land, stopping the environment loses your data — see section 10 for why anonymous volumes do not save you.
+**T030** is the next unticked task. User Story 3's configuration is in — the two named volumes are mounted (T026, T027), the broker's `hostname:` is pinned (T028), and Docker creates both volumes unaided (T029). What is left is the proof: the five-cycle restart test (T030), the five-cycle reset test (T031), and the README section documenting both (T032). Note the distinction: the data is no longer *discarded* on a stop, but that it genuinely *returns* is not yet measured — that is exactly what T030 settles.
 
 Then Phase 6: the three read-only audits (T033–T035), the edge cases (T036–T041), the re-measurement of start-to-healthy timing against the finished configuration (T045), the README review (T042), the full quickstart run (T043), and this log's implementation entry (T044).
 
@@ -849,6 +851,98 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-30 (later) — The volumes are mounted, and PostgreSQL 18 moved the path everyone has memorized
+
+**What:** T026 through T029. Both named volumes are now attached, the broker's node name is pinned, and the environment starts healthy from a clean slate. Stopping the environment no longer destroys the data — the gap that had been open since User Story 1.
+
+The three edits to `docker-compose.yml`:
+
+| Edit | Value | What it does |
+|---|---|---|
+| T026 | `postgres-data:/var/lib/postgresql` | Attaches the database's named volume |
+| T027 | `rabbitmq-data:/var/lib/rabbitmq` | Attaches the broker's Mnesia directory |
+| T028 | `hostname: aegisshield-rabbitmq` | Pins the broker's node name so the Mnesia path is stable |
+
+T029 confirmed Docker created both volumes by itself — `aegisshield_postgres-data` and `aegisshield_rabbitmq-data` — with no `mkdir`, no permission fixing, no preparation step.
+
+---
+
+**The defect: the obvious path was the wrong path.**
+
+T026 originally said to mount `postgres-data` at `/var/lib/postgresql/data`. That is the path in every PostgreSQL Docker example written in the last decade, it is what `data-model.md`, `plan.md` and `research.md` all specified, and it is wrong for the image this feature pins.
+
+The start failed:
+
+```text
+container aegisshield-postgres-1 is unhealthy
+```
+
+That message says nothing useful on its own. The logs did:
+
+```text
+Error: in 18+, these Docker images are configured to store database data in a
+       format which is compatible with "pg_ctlcluster" (specifically, using
+       major-version-specific directory names).
+       Counter to that, there appears to be PostgreSQL data in:
+         /var/lib/postgresql/data (unused mount/volume)
+       The suggested container configuration for 18+ is to place a single mount
+       at /var/lib/postgresql
+```
+
+And the image itself settles it:
+
+```text
+PGDATA=/var/lib/postgresql/18/docker    VOLUMES=/var/lib/postgresql
+```
+
+**What changed in PostgreSQL 18.** For versions 9 through 17 the official images put the cluster directly at `/var/lib/postgresql/data` and declared that as the volume. The 18+ images store it in a *major-version-specific* subdirectory — `PGDATA=/var/lib/postgresql/18/docker` — and declare the volume one level up at `/var/lib/postgresql`. The reason is upgrades: `pg_upgrade --link` has to see the old and the new cluster within the same filesystem, and if each version's directory were its own mount point, that link step would cross a mount boundary and fail. Moving the mount up one level puts both versions inside it.
+
+The image does not silently ignore a mount at the legacy path, and that is a kindness. It refuses to start, because historically that arrangement looked exactly like a half-finished version upgrade — someone bumping the image tag without running `pg_upgrade` — and starting anyway would have meant an empty database sitting next to the real data, or worse.
+
+New term: **`PGDATA`** is the environment variable naming the directory where a PostgreSQL server keeps one *cluster* — the data directory. A **cluster** here means one running server and all the databases inside it, not multiple machines; it is an unfortunate word. **`pg_upgrade`** is the tool that migrates a cluster from one major version to the next, and `--link` is its fast mode, which hard-links files instead of copying them and therefore requires both clusters on one filesystem.
+
+**The fix:** drop `/data`. The mount goes at `/var/lib/postgresql`, and the cluster lands at `18/docker` inside it — verified in the running container:
+
+```text
+$ ls /var/lib/postgresql
+18
+$ ls $PGDATA          # PGDATA=/var/lib/postgresql/18/docker
+PG_VERSION  base  global  pg_commit_ts  ...
+```
+
+The `docker compose down -v` before retrying was necessary, not ritual: the first attempt left content in `postgres-data` laid out for the wrong path, and reusing it would have shadowed the image's own `/var/lib/postgresql` directory.
+
+**Fixed in five places, not one.** The wrong path was written in `data-model.md` (twice), `plan.md`, `research.md` section 7, and T026's own text. Correcting only `docker-compose.yml` would have left four documents instructing the next reader to reintroduce the bug. `research.md` section 7 now carries the full explanation and the instruction to check `docker image inspect` on any future image bump rather than trusting memory. T026 records that it originally specified the legacy path and what the failure looked like, so the next person who sees `is unhealthy` has somewhere to land.
+
+**The lesson:** **a pinned version is a promise that the thing will not change under you — not a promise that what you know about it is still true.** T002 and T035 are careful about pinning `postgres:18.4-alpine` exactly, and that discipline worked perfectly; it simply has nothing to say about whether the *contents* of that image match the convention in your head. The path was written from memory of how PostgreSQL images have always worked, and it had been true for roughly ten years. `docker image inspect` would have taken four seconds and settled it.
+
+It is the same failure the 2026-10-23 entry already recorded in a different costume — *describing state from memory instead of checking the disk* — and that is worth noticing. The first time it was the project's own state; this time it was a dependency's. The general form: **when a value is going into a file, get it from the thing itself, not from recollection.** The authoritative source was available locally and free to query the whole time.
+
+One small thing in the environment's favour: the failure was loud, immediate, and arrived with its own fix in the error text. `--wait` is what turned a silently broken database into a non-zero exit, and `restart: unless-stopped` is why the error block kept repeating in the logs until the mount was corrected, rather than scrolling past once.
+
+---
+
+**T028, and what it looks like when it works.** The fixed hostname is the other non-obvious piece, and now there is evidence for the explanation `research.md` has been carrying since planning:
+
+```text
+$ rabbitmqctl eval 'node().'
+'rabbit@aegisshield-rabbitmq'
+
+$ ls /var/lib/rabbitmq/mnesia
+rabbit@aegisshield-rabbitmq
+rabbit@aegisshield-rabbitmq-feature_flags
+rabbit@aegisshield-rabbitmq-plugins-expand
+rabbit@aegisshield-rabbitmq.pid
+```
+
+Every one of those names contains the hostname. That is the whole trap in one listing: without `hostname:`, Docker hands the recreated container a new random name, RabbitMQ becomes `rabbit@<something-else>`, looks for a Mnesia directory of that name, finds none, and initializes an empty one *beside* the intact old data. The queues are still on disk and the broker cannot see them. T030 is the task that would catch it, and that task already says to check the hostname before suspecting the volume.
+
+---
+
+**Where this leaves the feature:** 29 of 45 tasks done. The remaining User Story 3 work is verification rather than configuration — T030 proves data survives five consecutive stop/start cycles, T031 proves `down -v` returns the environment to a first-ever-start state across five reset cycles, and T032 documents both in `README.md`. Then Phase 6.
+
+Worth stating plainly: **the persistence claim is not yet proven.** The volumes are attached and a single clean start works, but nothing has yet written a row, stopped the environment, started it again, and found the row still there. That is T030, and until it passes, "data survives a restart" is a reasonable expectation rather than a measured fact.
 
 ### 2026-10-30 — User Story 2, and a second `/speckit-analyze` that found four real defects
 

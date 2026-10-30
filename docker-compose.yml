@@ -12,6 +12,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is not set - copy .env.example to .env}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       test:
         - CMD-SHELL
@@ -26,6 +28,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:4.2.4-management-alpine
+    hostname: aegisshield-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER is not set - copy .env.example to .env}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS is not set - copy .env.example to .env}
@@ -33,6 +36,8 @@ services:
     ports:
       - "${RABBITMQ_PORT:-5672}:5672"
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
       test:
         - CMD-SHELL
