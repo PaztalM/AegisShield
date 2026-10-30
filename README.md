@@ -49,11 +49,16 @@ All commands run from the repository root.
 | Stop without removing containers | `docker compose stop` |
 | **Reset — discard all data** | `docker compose down -v` |
 | Open a database shell | `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'` |
-| Inspect broker queues | `docker compose exec rabbitmq rabbitmqctl list_queues` |
+| Inspect broker queues | `docker compose exec rabbitmq sh -c 'rabbitmqctl list_queues --vhost "$RABBITMQ_DEFAULT_VHOST"'` |
 | Show the resolved configuration | `docker compose config` |
 
 There is no `make up`, no wrapper script, and no task runner. `docker compose` is the interface —
 adding a layer over a one-line command would only create another thing to install and learn.
+
+**`--vhost` is not optional on the broker commands.** This environment runs in its own virtual host,
+`aegisshield`, not RabbitMQ's default `/`. A bare `rabbitmqctl list_queues` succeeds, prints
+`Listing queues for vhost / ...`, and shows **nothing** — which looks exactly like your queues having
+vanished. Pass the vhost, as the table above does.
 
 ### Running SQL from PowerShell on Windows
 
@@ -117,8 +122,10 @@ conflict and simply run `docker compose up -d --wait` again, the command exits `
 your host can reach it. The healthcheck cannot catch this, because it runs *inside* the container,
 where the database is genuinely fine.
 
-If you suspect you are in that state, `docker port aegisshield-postgres-1` prints nothing. The cure
-is the same either way:
+If you suspect you are in that state, `docker compose port postgres 5432` prints nothing. (Use that
+rather than `docker port <container>`: container names are derived from the directory you cloned
+into — `aegisshield-postgres-1` here — because `container_name:` is deliberately unset so two copies
+of this project can run on one host.) The cure is the same either way:
 
 ```bash
 docker compose down
