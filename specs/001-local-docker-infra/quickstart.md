@@ -60,9 +60,11 @@ docker compose exec rabbitmq sh -c \
   'rabbitmqctl list_queues --vhost "$RABBITMQ_DEFAULT_VHOST" name durable'
 ```
 
-`rabbitmqadmin` is the v2 CLI bundled in the `-management` image (version 2.27.0 in `rabbitmq:4.2.4-management-alpine`, confirmed). It talks to the HTTP API, so it needs `-u`/`-p` — it defaults to `guest`, which this environment does not create. Note the v2 flag syntax (`--name X --durable true`), not the `name=X durable=true` form of the old Python v1 script. The image ships no `curl`, so HTTP API checks go through `rabbitmqadmin` rather than a raw request.
+`rabbitmqadmin` is the v2 CLI bundled in the `-management` image (version 2.27.0 in `rabbitmq:4.2.4-management-alpine`, confirmed). It talks to the HTTP API, so it needs `-u`/`-p` — it defaults to `guest`, which this environment does not create. Note the v2 flag syntax (`--name X --durable true`), not the `name=X durable=true` form of the old Python v1 script.
 
-**Expected**: the connectivity check exits zero; `list_queues` shows `quickstart.check` with `durable = true`.
+**`publish` and `get` take a subcommand, and this is easy to get wrong.** It is `publish message` and `get messages`, not `publish` and `get` — the bare forms fail with `error: unexpected argument '--queue' found`, which reads like the flag is unsupported rather than like a missing subcommand. The flags also differ from `declare`: `-k/--routing-key` and `-m/--payload` on publish, `-q/--queue` and `-a/--ack-mode` on get. Verified against `rabbitmqadmin publish message --help` in this exact image rather than from memory. The image ships no `curl`, so HTTP API checks go through `rabbitmqadmin` rather than a raw request.
+
+**Expected**: the connectivity check exits zero; `list_queues` shows `quickstart.check` with `durable = true`; `publish` reports `Message published and routed successfully`; and `get messages` returns a row whose payload is the string you published. That completes a declare → publish → consume round-trip with no host client installed, which is what this scenario's opening sentence promises — an earlier revision promised it but only declared and listed.
 
 To prove the host-side endpoint specifically (acceptance scenario 1.2 as written), connect any standard AMQP client from the host to `amqp://<user>:<pass>@localhost:5672/<vhost>` using values from `.env`, declare a queue, publish, and consume. Expected: the connection is accepted and the published message is received.
 
@@ -334,6 +336,11 @@ docker compose up -d --wait; echo "exit=$?"
 # Verify both recovered with no manual repair
 docker compose exec postgres sh -c   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT count(*) FROM quickstart_check;"'
 docker compose exec rabbitmq sh -c   'rabbitmqctl list_queues --vhost "$RABBITMQ_DEFAULT_VHOST" name durable'
+
+# Publish a message, then consume it back
+docker compose exec rabbitmq sh -c 'rabbitmqadmin --non-interactive   -u "$RABBITMQ_DEFAULT_USER" -p "$RABBITMQ_DEFAULT_PASS"   --vhost "$RABBITMQ_DEFAULT_VHOST"   publish message --routing-key quickstart.check --payload "hello"'
+
+docker compose exec rabbitmq sh -c 'rabbitmqadmin --non-interactive   -u "$RABBITMQ_DEFAULT_USER" -p "$RABBITMQ_DEFAULT_PASS"   --vhost "$RABBITMQ_DEFAULT_VHOST"   get messages --queue quickstart.check --ack-mode ack_requeue_false'
 ```
 
 **Expected**: exit `0`, both components back to `running (healthy)`, the row still present and the durable queue still declared — with **no manual repair of stored state**. PostgreSQL replays its write-ahead log on start and RabbitMQ recovers its Mnesia directory; neither needs intervention for a simple kill.
