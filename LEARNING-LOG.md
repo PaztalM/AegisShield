@@ -2,11 +2,11 @@
 
 **A plain-language record of what we did, why we did it, and what we chose not to do.**
 
-Last updated: 2026-10-23
+Last updated: 2026-10-31
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified and planned — still no code exists**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
+> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified, planned, and broken into 59 ordered tasks — still no code exists**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
 
 ---
 
@@ -730,7 +730,9 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 **Feature 001 is complete — 45 of 45 tasks.** There is no next task in it. The 2026-10-31 implementation entry in the entry log below explains the finished feature line by line, lists what was rejected, records the cold and warm timings with what their comparison shows, and states plainly what still does not exist.
 
-**What comes next is a new feature, not more of this one.** The next one introduces an application service — a Producer or a Worker — and three things this feature built exist specifically for it: `postgres` and `rabbitmq` as internal DNS names, `depends_on` with `condition: service_healthy` to wait for both, and the extension point proven by T039 (a throwaway service joined the environment and reached both components with zero edits to their definitions). The constitution's Principle IV retry-on-unavailable-dependency requirement was deliberately deferred to that feature, because the party that must retry is an application service and this one ships none.
+**Feature 002 is now specified, planned and broken into 59 ordered tasks — and no code has been written.** The next command is `/speckit-analyze`, which cross-checks the spec, the plan and the task list against each other; writing the task list already surfaced two contradictions between documents (the velocity window is attributed to `occurred_at` in two documents and to `decided_at` in a third, and the environment-variable count is off by one), so that check has something concrete to catch. Implementation starts after that, at T001.
+
+**Feature 002 introduces the application services** — a Producer and a Worker — and three things this feature built exist specifically for it: `postgres` and `rabbitmq` as internal DNS names, `depends_on` with `condition: service_healthy` to wait for both, and the extension point proven by T039 (a throwaway service joined the environment and reached both components with zero edits to their definitions). The constitution's Principle IV retry-on-unavailable-dependency requirement was deliberately deferred to that feature, because the party that must retry is an application service and this one ships none.
 
 All three user stories are done. One command brings up a healthy broker and a healthy database; the broker's web interface is published with the project's own administrator account and no reachable `guest`; and data survives a stop while `down -v` provably discards it, each measured over five consecutive cycles.
 
@@ -853,6 +855,84 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-31 (later again) — Feature 002 has a task list: 59 steps, and two contradictions the list exposed
+
+**What:** Ran `/speckit-tasks` for feature 002. Produced `specs/002-transaction-event-pipeline/tasks.md`: 59 numbered tasks in seven phases. Still no code. This is the last planning artifact — the next command actually writes files.
+
+---
+
+#### What a task list is for, and why it is not just a to-do list
+
+The three documents before this one each answer a different question. The spec says **what** must be true. The plan says **how** it will be built. The task list says **in what order, and who is allowed to be working on what at the same time.**
+
+The reason the order matters more than it sounds: a task list is also a dependency statement. If the database table does not exist, the Worker cannot insert into it. If the Dockerfiles do not exist, Compose cannot build the images. Getting this wrong does not produce a bug — it produces an afternoon of confusing failures that all have the same boring cause.
+
+The seven phases:
+
+| Phase | Tasks | What it is |
+|---|---|---|
+| 1. Setup | T001–T008 | Six build-input files (three `Dockerfile`s, three `requirements.txt`), plus the two existing files that must be edited first |
+| 2. Foundational | T009–T015 | The database table, the thing that creates it, and the three new Compose entries. **Blocks everything.** |
+| 3. User Story 1 | T016–T027 | The working pipeline. This is the MVP. |
+| 4. User Story 2 | T028–T036 | Correct under failure: dead-lettering, and the tests that prove nothing is lost or duplicated |
+| 5. User Story 3 | T037–T043 | Retrying and recovering on its own |
+| 6. User Story 4 | T044–T049 | Tracing one transaction, and tuning the generator |
+| 7. Polish | T050–T059 | The measurements, the audits, the documentation |
+
+New term: **MVP** means *minimum viable product* — the smallest version that genuinely does the thing, rather than a version that is partly built everywhere. Phase 3 is deliberately the MVP: after T027, a transaction travels the whole path and ends up as a stored decision. Everything after that makes it reliable, recoverable or diagnosable, not *real*.
+
+---
+
+#### A choice about where correctness goes, which is worth understanding
+
+The obvious reading of the four user stories is: build the happy path in Story 1, then make it correct in Story 2. That is wrong, and rejecting it is the one genuinely consequential decision in this task list.
+
+The pipeline's whole correctness rests on two things — acknowledging the message only **after** the database commit, and `ON CONFLICT (event_id) DO NOTHING` on the insert. If those arrived in Story 2, then for the length of Story 1 the system would acknowledge messages it had not stored. That is not an incomplete feature; it is a system that destroys transactions, and the broker would believe each one was handled.
+
+So both are built in Story 1, in T023, from the start. **Story 2 does not introduce them; it proves they hold.** Its tasks are the dead-letter path, the integration test, the idempotency test, killing the Worker mid-message, and reconciling a thousand generated transactions against a thousand stored decisions.
+
+The general rule, stated plainly because it will come up again: **you do not stage work in an order that passes through a known-broken state.** An increment that is less capable is fine. An increment that silently loses data is not an increment, it is a bug with a schedule.
+
+---
+
+#### Two contradictions between documents, found by writing tasks against them
+
+This is the thing a task list does that nothing before it does: it forces every statement in the design documents to be turned into an instruction. A sentence that cannot be turned into an instruction, or that turns into two different ones, is a defect — and both of these had survived the spec, the plan, the quality checklist and a gate check.
+
+**1. The velocity window is measured against two different columns, depending on which document you read.** This one is a real behavioural contradiction, not a wording slip.
+
+- `spec.md`, in the Assumptions, says: "Velocity uses the store's own view of when decisions were made, so a skewed clock in the generator cannot corrupt a rule outcome." That means `decided_at` — the Worker's own clock.
+- `contracts/fraud-rules.md` says the opposite, in bold: "The window is measured against `occurred_at`, not `decided_at`", and accepts the consequence that a skewed Producer clock would shift the window.
+- `data-model.md` agrees with the contract: `occurred_at` is "when the Producer says the transaction happened. The velocity window is measured against this."
+
+The two are not interchangeable. `occurred_at` asks *when did these transactions happen*, which is what a velocity rule means, and trusts a clock we do not control. `decided_at` asks *when did we look at them*, which cannot be skewed by the Producer but makes the verdict depend on queue latency — the same transaction gets a different answer on a busy machine. Each is defensible; **having both written down is not**, because two implementers would write two different `WHERE` clauses and both would be able to point at a document.
+
+The task list implements `occurred_at` (T023), because two of the three documents say so and because the contract states the trade-off explicitly rather than in passing. But that is a decision that should be *made*, not inherited from a majority vote, so it is flagged rather than quietly resolved — `spec.md`'s Assumptions is the sentence that has to change.
+
+**2. The environment-variable count does not add up.** `contracts/environment-variables.md` says this feature adds eleven variables, bringing `.env.example` to twenty. Its own tables list twelve: the twelfth is `HEARTBEAT_MAX_AGE_SECONDS`, which has its own row, its own default and its own consumer, and so is a variable like any other. The real totals are twelve new and twenty-one.
+
+Trivial on its own. It matters because feature 001's T034 audit — every variable Compose interpolates exists in `.env.example`, and every key in `.env.example` is actually read by something — works by counting. An audit whose expected number is wrong either passes when it should fail or fails when it should pass, and in both cases the next person stops trusting it. T053 repeats that audit and reconciles the count.
+
+**The lesson, and it is a new one for this project:** the previous lesson was that *claims about dependencies must be executed, not argued*. This is its paper counterpart — **a document is only as checked as the most specific thing anyone has tried to do with it.** The spec was read, checklisted, planned against and gate-checked, and this contradiction survived all four, because none of those steps required anyone to write a `WHERE` clause. Turning prose into 59 instructions is itself a test, and it failed two of them.
+
+---
+
+#### What `[P]` means, and the one place it is deliberately absent
+
+Thirteen tasks carry a `[P]` marker, meaning they touch different files with no unfinished dependency and could be done at the same time by different people.
+
+Phase 2 has none at all, and that is on purpose: T011 through T015 all edit `docker-compose.yml`. Marking those parallel would invite two people to edit one file simultaneously, which is how you create a merge conflict with yourself. Phase 1, by contrast, is six brand-new files that share nothing, so all six are parallel.
+
+---
+
+#### What does NOT exist
+
+- **Still no code.** Not one line. `producer/`, `worker/` and `tests/` are described in detail and none of the three directories exists on disk.
+- `docker-compose.yml` is unchanged and still defines two services.
+- Nothing has been measured. Every number in the task list — 50 events/second, a 2-second 95th percentile, a 60-second cold start — is a **target copied from the spec**, not a result. Twelve of the 59 tasks exist specifically to replace those targets with measurements, and the instruction in each is to record the number that came out, not the number predicted.
+
+**State:** feature 001 complete and verified. Feature 002 specified, planned, and now broken into 59 ordered tasks. Two document defects found and recorded, both still unfixed. `/speckit-analyze` is the sensible next step, because it now has all three artifacts to cross-check — and it should find at least the velocity-window contradiction, which is a useful test of whether that check is worth running.
 
 ### 2026-10-31 (later still) — Feature 002 is planned: how the pipeline will be built, and the four abstractions we turned down
 
