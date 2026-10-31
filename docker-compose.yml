@@ -56,7 +56,7 @@ services:
     networks:
       - aegisshield-net
     restart: unless-stopped
-  
+
   producer:
     build: ./producer
     environment:
@@ -78,6 +78,32 @@ services:
       - aegisshield-net
     restart: unless-stopped
 
+  worker:
+    build: ./worker
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER is not set - copy .env.example to .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS is not set - copy .env.example to .env}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:?RABBITMQ_DEFAULT_VHOST is not set - copy .env.example to .env}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is not set - copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is not set - copy .env.example to .env}
+      FRAUD_AMOUNT_THRESHOLD: ${FRAUD_AMOUNT_THRESHOLD:-5000.00}
+      FRAUD_VELOCITY_COUNT: ${FRAUD_VELOCITY_COUNT:-4}
+      FRAUD_VELOCITY_WINDOW_SECONDS: ${FRAUD_VELOCITY_WINDOW_SECONDS:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RETRY_MAX_DELAY_SECONDS: ${RETRY_MAX_DELAY_SECONDS:-30}
+      HEARTBEAT_FILE: ${HEARTBEAT_FILE:-/tmp/heartbeat}
+      HEARTBEAT_MAX_AGE_SECONDS: ${HEARTBEAT_MAX_AGE_SECONDS:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - aegisshield-net
+    restart: unless-stopped
 
 networks:
   aegisshield-net:
