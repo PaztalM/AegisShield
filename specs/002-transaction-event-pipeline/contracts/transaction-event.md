@@ -32,7 +32,11 @@ JSON numbers are IEEE 754 doubles in most parsers, and `0.1 + 0.2 != 0.3` in bin
 
 So the amount crosses the wire as a decimal **string** and is parsed into Python's `Decimal` and stored as PostgreSQL `numeric(12,2)`. Both are exact decimal types. The cost is one conversion at each end; the benefit is that the boundary case means what it says.
 
-`numeric(12,2)` allows up to 10 digits before the decimal point, which is far beyond any plausible card transaction and leaves the spec's "enormous amount" edge case decidable rather than an overflow.
+`numeric(12,2)` allows up to 10 digits before the decimal point, which is far beyond any plausible card transaction.
+
+**It is not unbounded, and that has to be checked before the insert rather than discovered during it.** Corrected 2026-10-31: this paragraph previously claimed the type left the spec's "enormous amount" edge case "decidable rather than an overflow". That is false above 10<sup>10</sup>. A payload of `"99999999999.00"` is a perfectly valid decimal string, so it passes every other rule on this list, and then the insert fails with a numeric overflow. Follow that through: the decision cannot be committed, so the message is never acknowledged, so the broker redelivers it, so it fails again — forever, with `prefetch=1` meaning every transaction behind it waits. That is precisely the poison-message loop FR-019 forbids, arrived at through a type constraint rather than through bad parsing.
+
+So an out-of-range amount is a **validation failure**, dead-lettered like any other message that cannot be processed. The range check belongs in the Worker's validation step, where the outcome is a dead letter a developer can read, and not in the database, where the outcome is an exception mid-transaction.
 
 ## Validation, and what happens when it fails
 
@@ -44,6 +48,7 @@ The Worker must **reject into the dead-letter queue** (never drop, never requeue
 - has an `event_id` that is not a valid UUID
 - has an `occurred_at` that is not parseable, or carries no timezone offset
 - has an `amount` that is not a valid decimal
+- has an `amount` that **cannot be stored in `numeric(12,2)`** — magnitude at or above 10<sup>10</sup>, or more than two decimal places that would not round cleanly
 - has an empty `account_id` or `merchant`
 
 Each rejection must be logged with the reason and, where it could be read, the `event_id` — a dead-lettered message nobody can explain is barely better than a dropped one.

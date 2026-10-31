@@ -1,6 +1,8 @@
 # Contract: Environment variables
 
-Every variable this feature adds, its default, which component reads it, and what it does. Feature 001 established nine variables; this feature adds **eleven**, bringing `.env.example` to twenty.
+Every variable this feature adds, its default, which component reads it, and what it does. Feature 001 established nine variables; this feature adds **twelve**, bringing `.env.example` to **twenty-one**.
+
+> **Corrected 2026-10-31** after the `/speckit-analyze` cross-check: this file previously said eleven and twenty, while its own tables listed twelve. The miscount matters because feature 001's variable-parity audit works by comparing counts, so a wrong expected number makes the audit pass when it should fail.
 
 Feature 001's rules carry over and are not restated per-row:
 
@@ -26,7 +28,9 @@ The distinction is not cosmetic. Feature 001's T037 verified both halves: a miss
 
 ### Both services — connection settings
 
-These are **required** tier. They are not duplicated credentials: they are the same values feature 001 already defines, referenced by the new services. The reason they appear as separate variables at all is that the services need the broker and database *hostnames*, which are internal to the Compose network and have no meaning to the broker or database images themselves.
+These are **defaulted** tier, as the table below states. (This paragraph previously said "required", contradicting its own table — corrected 2026-10-31.) Defaulted is correct because a hostname is not a secret and the default is simply the Compose service name: a missing one should start normally rather than refuse to boot. Contrast the credentials, which stay required tier precisely because silently falling back to a default password is worse than not starting.
+
+They are not duplicated credentials: they are the same values feature 001 already defines, referenced by the new services. The reason they appear as separate variables at all is that the services need the broker and database *hostnames*, which are internal to the Compose network and have no meaning to the broker or database images themselves.
 
 | Variable | Tier | Default | Read by | Purpose |
 |---|---|---|---|---|
@@ -69,10 +73,10 @@ Note the services use the **internal** ports `5672` and `5432`, not `RABBITMQ_PO
 | Source | Variables |
 |---|---|
 | Feature 001 | 9 |
-| This feature | 11 |
-| **Total in `.env.example`** | **20** |
+| This feature | 12 |
+| **Total in `.env.example`** | **21** |
 
-Feature 001's T034 audited that every `${VAR}` the Compose file interpolates appears in `.env.example` and that every `.env.example` key is actually read, with no speculative extras. That audit must be repeated for this feature at twenty variables — the parity property is what keeps the example file trustworthy, and it is easy to break while adding eleven at once.
+Feature 001's T034 audited that every `${VAR}` the Compose file interpolates appears in `.env.example` and that every `.env.example` key is actually read, with no speculative extras. That audit must be repeated for this feature at twenty-one variables — the parity property is what keeps the example file trustworthy, and it is easy to break while adding twelve at once.
 
 ## Variables deliberately not added
 

@@ -6,7 +6,7 @@ Last updated: 2026-10-31
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified, planned, broken into 59 ordered tasks, and cross-checked — still no code exists**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
+> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified, planned, broken into 62 ordered tasks, cross-checked and fully remediated — still no code exists**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
 
 ---
 
@@ -730,7 +730,7 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 **Feature 001 is complete — 45 of 45 tasks.** There is no next task in it. The 2026-10-31 implementation entry in the entry log below explains the finished feature line by line, lists what was rejected, records the cold and warm timings with what their comparison shows, and states plainly what still does not exist.
 
-**Feature 002 is now specified, planned and broken into 59 ordered tasks — and no code has been written.** `/speckit-analyze` has been run and found twelve defects; the critical one and all three high ones are fixed — most importantly, the test image could not have been built at all, because its build context did not contain the rules file its unit tests import. Eight medium and low findings are recorded and deliberately unfixed. The next step is T001, the first task in this project that writes application code.
+**Feature 002 is now specified, planned and broken into 59 ordered tasks — and no code has been written.** `/speckit-analyze` found twelve defects and all twelve are now fixed, plus two more found while fixing them — most seriously, a single valid message carrying an amount too large for its database column would have been redelivered forever and blocked every transaction behind it. The next step is T001, the first task in this project that writes application code.
 
 **Feature 002 introduces the application services** — a Producer and a Worker — and three things this feature built exist specifically for it: `postgres` and `rabbitmq` as internal DNS names, `depends_on` with `condition: service_healthy` to wait for both, and the extension point proven by T039 (a throwaway service joined the environment and reached both components with zero edits to their definitions). The constitution's Principle IV retry-on-unavailable-dependency requirement was deliberately deferred to that feature, because the party that must retry is an application service and this one ships none.
 
@@ -855,6 +855,76 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-31 (final) — Fixing the remaining findings turned up two more, and one of them was a way to jam the whole pipeline with a single valid message
+
+**What:** Fixed the eight medium and low findings left over from the cross-check. Fixing them surfaced two defects the cross-check itself had missed, one of them serious. Added three tasks (T060–T062), so the list is now 62. Still no code.
+
+---
+
+#### The serious one: a legal message that can never be stored
+
+The amount travels as a decimal string and is stored in a PostgreSQL column declared `numeric(12,2)`.
+
+New term: **`numeric(12,2)`** means an exact decimal number with at most 12 digits in total, 2 of them after the point — so up to `9999999999.99`, about ten billion. It was chosen because money must not be held in a binary floating-point type, where `0.1 + 0.2` is not `0.3`.
+
+The message contract listed seven reasons to reject a message, and then claimed that `numeric(12,2)` "leaves the spec's 'enormous amount' edge case decidable rather than an overflow". That sentence is simply wrong, and the way it is wrong is instructive, so here is the whole chain:
+
+1. A payload arrives with `"amount": "99999999999.00"` — eleven digits. That is a perfectly valid decimal string, so it passes all seven validation rules.
+2. The Worker parses it, evaluates the rules (it is above the threshold, so it is flagged), and tries to insert the decision.
+3. The insert fails: the value does not fit the column. PostgreSQL raises a numeric overflow.
+4. The database transaction never commits, so — correctly, by design — the Worker does **not** acknowledge the message.
+5. The broker therefore redelivers it.
+6. Go to step 2.
+
+The loop never ends. And because the consumer is configured with `prefetch=1` — exactly one unacknowledged message at a time, which is what keeps the acknowledge-after-commit guarantee simple — **every other transaction in the queue waits behind it forever.** One message of about forty characters stops the entire pipeline.
+
+New term: a **poison message** is a message that cannot be processed but is never disposed of, so it is delivered again and again. Avoiding exactly this is why FR-019 exists and why rejected messages go to a dead-letter queue.
+
+What makes this worth a long entry is that **every individual decision in that chain is correct.** Not acknowledging an uncommitted decision is the single most important rule in the design. `prefetch=1` is the right choice. `numeric(12,2)` is the right type. Rejecting unparseable messages into a dead-letter queue is implemented. The hole is in the gap between two correct decisions: validation checked whether the amount was *a decimal*, and the database checked whether it *fit*, and nobody checked the second thing at the point where the answer could still be acted on.
+
+The fix is one more validation rule — an amount of magnitude 10^10 or more is rejected into the dead-letter queue like any other message that cannot be processed. The principle generalises: **validate against what the storage can actually accept, not merely against what the format allows.** A constraint enforced only by the database is discovered at the worst possible moment, in the middle of a transaction, where the only options left are all bad.
+
+T061 now tests both ends of this: the largest amount that *does* fit must be stored normally, and one that does not must be dead-lettered with the queue behind it still draining. The second assertion is the one that proves the loop is closed rather than merely described.
+
+---
+
+#### The small one: a document contradicting its own table, three lines later
+
+`contracts/environment-variables.md` introduced `RABBITMQ_HOST` and `POSTGRES_HOST` with the sentence "These are **required** tier" — and then the table immediately below listed both as **defaulted**, with defaults, and with a per-row explanation of why defaulted was correct.
+
+The table is right. A hostname is not a secret and its default is just the Compose service name, so a missing one should start normally. Credentials are the opposite: they stay required tier precisely because quietly falling back to a default password is worse than refusing to boot.
+
+Trivial to fix. Worth recording because it is the third contradiction in this feature's documents where the **prose** disagreed with the **table** or with another file, and all three survived every review that did not require acting on the sentence. Prose is where confident-sounding wrong statements live; tables and code force a value.
+
+---
+
+#### What else was fixed
+
+| Finding | Fix |
+|---|---|
+| Variable count said eleven new and twenty total | Twelve and twenty-one, which is what the tables always listed. Matters because the parity audit compares counts, so a wrong expected number makes the audit pass when it should fail. |
+| `FR-024` listed as both covered and not covered in the same file | Removed from the not-covered list; Scenario 18 does cover it. |
+| Zero and negative amounts untested | Two more unit cases in T017, which now has eight. `Decimal("-50.00") > Decimal("5000.00")` must be plainly false, not an error. |
+| Two consumers at once: a spec edge case with nothing testing it | T060. This is the most direct available test of the feature's central guarantee — the primary key is meant to make a duplicate *impossible*, and two Workers is the only configuration that actually tries it. |
+| A future-dated timestamp: listed, never tested | T062. Now that the velocity window is measured against `occurred_at`, a future-dated event sits ahead of its own window, so the behaviour has to be observed rather than reasoned about. |
+| End-to-end latency measured across two clocks | Not a bug here — both containers take their time from the same host kernel — but T051 now says so, because the number stops meaning anything if a component ever moves to another machine. |
+
+---
+
+#### Why the new tasks are numbered out of order
+
+T060, T061 and T062 sit in the middle of the list, inside the User Story 2 phase, with numbers higher than everything after them. They were not renumbered into sequence on purpose: T001 through T059 are already cited by this log, by three commit messages and by the analysis report, and silently repointing all of those is worse than a visible gap that carries an explanation. Feature 001 set the precedent when it moved T045 rather than shuffling everything around it.
+
+---
+
+#### What does NOT exist
+
+- **Still no code.** `producer/`, `worker/` and `tests/` do not exist. `docker-compose.yml` still defines two services.
+- Nothing has been measured. Every number in the plan is a target.
+- **Twelve findings were raised by the cross-check and all twelve are now closed, plus two more found while closing them.** That is not the same as the documents being correct — it is the same as nothing else having been noticed yet.
+
+**State:** feature 001 complete and verified. Feature 002 specified, planned, broken into 62 tasks, cross-checked, and fully remediated. The next thing that happens is T001, which writes the first line of application code in this project.
 
 ### 2026-10-31 (last entry of the day) — The cross-check found four real defects, and one of them would have stopped the tests from building at all
 
