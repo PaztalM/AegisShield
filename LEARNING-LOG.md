@@ -6,7 +6,7 @@ Last updated: 2026-10-31
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified, planned, and broken into 59 ordered tasks — still no code exists**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
+> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified, planned, broken into 59 ordered tasks, and cross-checked — still no code exists**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
 
 ---
 
@@ -730,7 +730,7 @@ Two commits today, both on `dev` and pushed to `origin`:
 
 **Feature 001 is complete — 45 of 45 tasks.** There is no next task in it. The 2026-10-31 implementation entry in the entry log below explains the finished feature line by line, lists what was rejected, records the cold and warm timings with what their comparison shows, and states plainly what still does not exist.
 
-**Feature 002 is now specified, planned and broken into 59 ordered tasks — and no code has been written.** The next command is `/speckit-analyze`, which cross-checks the spec, the plan and the task list against each other; writing the task list already surfaced two contradictions between documents (the velocity window is attributed to `occurred_at` in two documents and to `decided_at` in a third, and the environment-variable count is off by one), so that check has something concrete to catch. Implementation starts after that, at T001.
+**Feature 002 is now specified, planned and broken into 59 ordered tasks — and no code has been written.** `/speckit-analyze` has been run and found twelve defects; the critical one and all three high ones are fixed — most importantly, the test image could not have been built at all, because its build context did not contain the rules file its unit tests import. Eight medium and low findings are recorded and deliberately unfixed. The next step is T001, the first task in this project that writes application code.
 
 **Feature 002 introduces the application services** — a Producer and a Worker — and three things this feature built exist specifically for it: `postgres` and `rabbitmq` as internal DNS names, `depends_on` with `condition: service_healthy` to wait for both, and the extension point proven by T039 (a throwaway service joined the environment and reached both components with zero edits to their definitions). The constitution's Principle IV retry-on-unavailable-dependency requirement was deliberately deferred to that feature, because the party that must retry is an application service and this one ships none.
 
@@ -855,6 +855,84 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-31 (last entry of the day) — The cross-check found four real defects, and one of them would have stopped the tests from building at all
+
+**What:** Ran `/speckit-analyze` on feature 002 — a read-only pass that compares `spec.md`, `plan.md` and `tasks.md` against each other and against the constitution. It produced twelve findings: one critical, three high, six medium, two low. The critical and the three high ones are now fixed. Still no code.
+
+---
+
+#### What this check is, and what it provably cannot do
+
+`/speckit-analyze` reads the documents and looks for places where they disagree with each other: a requirement no task covers, a task covering nothing, two documents stating different things, a rule the constitution forbids. It writes nothing; it only reports.
+
+What it cannot do is run anything. That limit is not theoretical — on feature 001 this same check produced a confident, wrong claim about how Docker's restart policy behaves, which took a measurement to overturn. So its output is a **list of contradictions to adjudicate**, not a list of things that will go wrong. Four of feature 001's five genuine surprises came from a dependency behaving differently than assumed, and no amount of document-reading would have caught any of them.
+
+One suspicion from this pass was checked rather than reported. `rule` is the name of a column in the new table, and `RULE` used to be a PostgreSQL keyword (from the long-obsolete `CREATE RULE`). Reporting "this column name may need quoting" would have been plausible and would have cost somebody an hour. Instead: start a throwaway PostgreSQL 18.4, create the table with the exact `CHECK` constraint from the design, insert a row, select it back. It works unquoted. **Finding dropped before it was written down**, which is the second time in two days that has happened and is becoming the most useful habit in this project.
+
+---
+
+#### The critical one: the unit tests could not have been built
+
+New term: a **build context** is the set of files Docker is allowed to see while building an image. Everything the image copies in must be inside it. It is set per service, and for the two real services it is that service's own folder — `producer/` and `worker/` — which is exactly right, because each service should contain only itself.
+
+The plan applied the same pattern to the test runner: `build: ./tests`. And the plan *also* said, two paragraphs earlier, that `rules.py` lives in `worker/` "purely so the rule functions can be imported by the unit tests".
+
+Both sentences are reasonable. Together they are impossible. With a context of `./tests`, the file `worker/rules.py` is not visible to the build, so it cannot be copied into the image, so `tests/unit/test_rules.py` cannot import it. Two tasks (T017 and T025) were unexecutable, and the constitution's requirement that the fraud rules have unit tests could not have been met.
+
+The fix: the `tests` service alone builds from the **repository root**, with `dockerfile: tests/Dockerfile`, copying both `worker/rules.py` and `tests/`. A new root `.dockerignore` keeps `.git`, `specs/` and the markdown out of that context — and applies only to this one build, because the other two contexts are subdirectories and never read it.
+
+Two alternatives were rejected, both instructive:
+
+- **Bind-mount `worker/` into the test container.** A **bind mount** shares a folder from the host machine straight into a running container. It would work, and the tests would then run against whatever is in the working tree rather than against a built image — so "the tests pass" would stop meaning "the image is correct", and the command would behave differently on a machine with a different layout.
+- **Copy `rules.py` into `tests/`.** Two copies of the fraud rules, which will drift. The whole reason `rules.py` is one file in one place is to prevent exactly that.
+
+**This does not weaken Principle I.** The rule is that one *service* must not import another's code. `tests` is a test runner that is never deployed, and what it imports is the code under test. What would break the principle is a shared package that both `producer/` and `worker/` import — and there is none. The distinction matters because the lazy reading ("tests import worker code, therefore the boundary is broken") would push you toward the shared package that genuinely *is* forbidden.
+
+**Why it survived four earlier reviews** — a spec, a quality checklist, a plan and a constitution gate — is the interesting part. None of those steps required anyone to ask *which files can this image see*. The task list was the first artifact specific enough to make the question unavoidable. **A document is only as checked as the most specific thing anyone has tried to do with it.**
+
+---
+
+#### The three high findings
+
+**1. The velocity window was attributed to two different columns.** The rules contract and the data model both said the window is measured against `occurred_at` — when the transaction says it happened. The spec's Assumptions said the opposite: the store's view of when the decision was *made*. Those produce different verdicts for the same transaction, and two implementers would each have written a different `WHERE` clause with a document to point at.
+
+`occurred_at` wins, and the spec sentence was rewritten. The reasoning, since it is a genuine trade-off rather than an obvious call:
+
+| Basis | What it means | What goes wrong |
+|---|---|---|
+| `occurred_at` (chosen) | "how many transactions happened on this account in a minute" — the question a velocity rule is actually asked | The generator supplies the timestamp, so a badly skewed generator clock shifts the window |
+| `decided_at` (rejected) | "how many did we get round to looking at in a minute" | The verdict depends on how long the message sat in the queue — the same transaction is flagged on a busy machine and not on an idle one |
+
+The deciding argument is determinism. A skewed clock is a visible, diagnosable fault, and both timestamps are stored so it can be found after the fact. A verdict that depends on queue depth is not diagnosable at all: nothing is broken, the answer is just different each time. **Prefer a wrong answer you can detect over an unstable one you cannot.**
+
+**2. FR-007 said the generator must be the *only* writer to the queue — and the integration tests publish to it.** Not a misunderstanding; both are required. FR-032 demands a test against the real broker with nothing mocked, and such a test has to publish from the outside, including malformed messages and deliberate repeats. The requirement has been narrowed to the running pipeline, with the test harness named as an explicit exemption. Written down rather than left implicit so that the next person who finds a second `basic_publish` reads it as a decision instead of a bug.
+
+**3. The test runner did not wait for the Worker.** Its `depends_on` listed the broker and the database. But the integration test publishes an event and then waits for a *decision*, and only the Worker makes those. With the Worker down the test would hang and then fail for a reason unrelated to what it was testing — the worst kind of test failure, because it sends you to look in the wrong place. Fixed by adding `worker: condition: service_healthy`, which works because the Worker now has a healthcheck of its own.
+
+Also folded in while rewriting the same task: the Producer must publish to the **default exchange** with routing key `transactions`. Dead-lettering preserves a message's original routing key and the dead-letter binding matches on exactly that string, so publishing through a named exchange would send rejected messages nowhere — and the symptom would be dead letters quietly disappearing, which is the one failure FR-019 exists to prevent.
+
+---
+
+#### What was found and deliberately left alone
+
+Six medium and two low findings are recorded in full in the analysis but not yet fixed, because fixing them is a separate decision. The three worth knowing about are all the same shape — an edge case the spec lists and nothing verifies:
+
+- **Two consumers at once.** The design makes this safe through the primary key, and nothing tests it. About five minutes of work (`--scale worker=2`) and it exercises the feature's central guarantee.
+- **Zero, negative and enormous amounts.** The table deliberately has no constraint on `amount` so these are storable, but no test confirms one is actually decided rather than crashing the Worker.
+- **A timestamp in the future.** Listed as an edge case, tested nowhere — and it is the same edge case the velocity-window contradiction was really about.
+
+An edge case written in a spec with nothing checking it is not a safeguard, it is a claim. These three should either get a task each or be demoted to explicitly stated non-goals.
+
+---
+
+#### What does NOT exist
+
+- **Still no code.** `producer/`, `worker/` and `tests/` do not exist on disk. `docker-compose.yml` still defines two services.
+- Nothing has been measured. Every number in the plan is a target copied from the spec.
+- Eight findings from this pass remain unfixed, by choice, and are listed above and in the analysis output.
+
+**State:** feature 001 complete and verified. Feature 002 specified, planned, broken into 59 tasks, and cross-checked — with the critical and three high findings corrected in the spec, the plan, the task list and the queue-topology contract. Implementation has not started. The next thing that happens is T001, and it is the first task in this project that writes a line of application code.
 
 ### 2026-10-31 (later again) — Feature 002 has a task list: 59 steps, and two contradictions the list exposed
 

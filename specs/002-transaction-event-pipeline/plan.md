@@ -112,13 +112,14 @@ worker/
     └── 001_create_fraud_decisions.sql
 
 tests/
-├── Dockerfile               # python:3.14.10-slim
+├── Dockerfile               # python:3.14.10-slim; built from the REPO ROOT as context
 ├── requirements.txt         # pytest, pika, psycopg pinned
 ├── unit/
 │   └── test_rules.py        # flagged, non-flagged and boundary per rule
 └── integration/
     └── test_pipeline.py     # real broker, real database, no stand-ins
 
+.dockerignore                # NEW - keeps .git, specs/ and docs out of the tests context
 docker-compose.yml           # EXISTS - gains producer, worker, tests
 .env.example                 # EXISTS - gains the new variables
 README.md                    # EXISTS - gains operating instructions for the pipeline
@@ -127,6 +128,12 @@ README.md                    # EXISTS - gains operating instructions for the pip
 **Structure Decision**: Three top-level service directories rather than a shared `src/` tree, because Principle I requires each service to be independently buildable with its own dependency manifest and forbids them importing from one another. There is deliberately **no shared package** for the event format: the contract is a document, and each service parses the JSON on its own terms. That duplication is the point — it is what keeps the two services independently deployable, and it is cheaper than the hidden coupling a shared library creates.
 
 `rules.py` sits inside `worker/` rather than anywhere shared, because only the Worker evaluates rules. It is a separate file purely so the rule functions can be imported by the unit tests without starting a broker connection.
+
+**How the test image reaches `rules.py`, which is not obvious and was nearly wrong.** The two services build from their own directories (`build: ./producer`, `build: ./worker`), so each context contains exactly that service. The `tests` image cannot work the same way: a context of `./tests` would not contain `worker/rules.py`, and the unit tests — the entire reason `rules.py` is a separate file — could not import it. So the `tests` service alone builds with the **repository root as its context** and `dockerfile: tests/Dockerfile`, copying both `worker/rules.py` and `tests/`. A root `.dockerignore` keeps `.git`, `specs/`, `.env` and the markdown documents out of that context; it applies only to this build, because the other two contexts are subdirectories and never read it.
+
+Two alternatives were rejected. **Bind-mounting `./worker` into the test container** avoids the wider context, but then the tests run against the working tree instead of against a built image, and the command stops being reproducible on a machine with a different layout. **Copying `rules.py` into `tests/`** creates a second copy of the rules that will drift from the first, which is the exact failure mode the single-source rule exists to prevent.
+
+This does **not** weaken Principle I. The prohibition is on one *service* importing another's code; `tests` is a test runner that is never deployed, and the thing it imports is the code under test. What would violate the principle is a shared package that both `producer/` and `worker/` import — and there is none.
 
 Migrations live in `worker/` because the Worker is the only service that touches the database, which also removes any race over who applies them.
 
@@ -138,4 +145,6 @@ Migrations live in `worker/` because the Worker is the only service that touches
 |-----------|------------|-------------------------------------|
 | A third Compose entry, `tests`, carrying `profiles: ["test"]` — feature 001's `docker-compose.yml` header states "no profiles" as a design rule | FR-032 requires an integration test against the real broker and real database, and FR-026 forbids requiring anything on the host — so the test must run in a container. A plain service would run on every `docker compose up`, which is wrong for a one-shot test runner. `profiles:` is the mechanism Compose provides for exactly this, and the need is concrete and present rather than speculative. The header comment is updated in the same change so the file does not contradict itself. | **Baking `pytest` into the Worker image and running `docker compose exec worker pytest`** — avoids the profile, but puts test-only dependencies into a runtime image, which cuts against the constitution's requirement that each service's pinned dependencies serve a present requirement. **A second Compose file for tests** — breaks feature 001's stronger "exactly one Compose file" rule and splits the environment definition in two. **Running `pytest` on the host** — directly violates FR-026. |
 
-No other entries. In particular, no abstraction is introduced: there is no rule registry, no repository layer, no ORM, no base class, no configuration framework, and no retry library. Those were all considered and rejected in research.md on Principle V grounds.
+| The `tests` service builds from the **repository root** as its context with `dockerfile: tests/Dockerfile`, instead of from its own directory like the other two, and this brings a new root `.dockerignore` with it | The unit tests must import `worker/rules.py`, which is the only reason that file is separate from `worker.py`. A context of `./tests` does not contain it, so the tests would be unbuildable and the constitution's requirement that the fraud rules have unit tests could not be met. | **Bind-mounting `./worker` into the test container** — narrower context, but the tests then run against the working tree rather than a built image, and the command stops being reproducible across machines. **Copying `rules.py` into `tests/`** — a second copy of the rules that drifts from the first, which is the failure the single-source rule exists to prevent. **Dropping the unit tests** — not available; the constitution requires them. |
+
+No other entries. In particular, no abstraction is introduced: there is no rule registry, no repository layer, no ORM, no base class, no configuration framework, and no retry library. Those were all considered and rejected in research.md on Principle V grounds. Neither entry above is an abstraction — both are Compose mechanics made explicit so that a reader does not mistake them for carelessness.

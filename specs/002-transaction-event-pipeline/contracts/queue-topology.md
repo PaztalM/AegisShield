@@ -39,7 +39,7 @@ No other arguments. In particular:
 
 Both services declare the **whole** topology at startup, idempotently, with identical arguments. AMQP declarations are idempotent when the arguments match, so whichever starts first creates it and the other finds it already correct.
 
-This is deliberate rather than lazy: it means neither service depends on the other having started, and it keeps the single documented start command the only thing a developer runs (no separate setup step). The Producer still remains the **only publisher** to `transactions`, per FR-007 — declaring a queue is not writing to it.
+This is deliberate rather than lazy: it means neither service depends on the other having started, and it keeps the single documented start command the only thing a developer runs (no separate setup step). The Producer still remains the **only publisher** to `transactions` among the running services, per FR-007 — declaring a queue is not writing to it. The one other publisher in the repository is the integration test harness, which FR-007 names as an explicit exemption: it has to publish crafted and malformed events from the outside, because that is the only way to test the interaction between the Worker and a real broker.
 
 ## The immutability warning
 
