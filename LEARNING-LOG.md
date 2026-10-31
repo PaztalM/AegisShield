@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified only — no code exists yet**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
+> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified and planned — still no code exists**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
 
 ---
 
@@ -853,6 +853,135 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-31 (later still) — Feature 002 is planned: how the pipeline will be built, and the four abstractions we turned down
+
+**What:** Ran `/speckit-plan` for feature 002. Produced `plan.md`, `research.md`, `data-model.md`, four contract documents, and a validation guide with 18 scenarios. Still no code — this is the "how" to the spec's "what".
+
+---
+
+#### The versions were measured, not remembered
+
+Feature 001 lost time twice to confident claims about dependencies that used to be true. So this time the first thing done was to ask the actual tools:
+
+```
+docker manifest inspect python:3.14.10-slim   -> exists
+docker run --rm python:3.14-slim python -V    -> Python 3.14.10
+docker run --rm python:3.15-slim python -V    -> Python 3.15.2
+pip install pika "psycopg[binary]" pytest     -> works on 3.14 AND on 3.15
+```
+
+Chosen: `python:3.14.10-slim`, pinned to the full patch version, identical in all three Dockerfiles. Library versions `pika==1.4.4`, `psycopg[binary]==3.3.6`, `pytest==9.2.0`.
+
+**And one of my own arguments was destroyed by checking it, which is the useful part.** The standard reason to avoid the newest Python minor is that compiled packages lag behind it: a new release means no prebuilt wheel, so `psycopg` would try to compile from source and fail in a slim image with no compiler. That is a real phenomenon and it was my reason for picking 3.14 over 3.15.
+
+It is not true here. All three packages install cleanly on 3.15. So the honest reason for choosing 3.14 is much thinner: it is one version behind the newest, which leaves more room for some future dependency that has not caught up, and nothing in this feature needs anything 3.15 added. That is conservatism, not a technical constraint, and research.md says so — including that 3.15.2 is verified working and switching is a one-line change in three files.
+
+The lesson is small but keeps recurring: **a plausible reason is not a verified one, and the gap between them is one command.** This is the fifth time in this project that checking has overturned something I was confident about. The difference this time is that it was caught before it was written down as fact.
+
+---
+
+#### The design, and what it rests on
+
+The correctness of this feature does not rest on writing careful code. It rests on three mechanisms that make the dangerous mistakes impossible rather than unlikely:
+
+**1. Acknowledge last.** The Worker tells the broker "handled" only after the database commit. data-model.md fixes the order as six numbered steps and makes the point explicitly: a crash at *any* point in that sequence either redelivers the message or hits the primary key, so no ordering of those steps loses a transaction. Get the order backwards and a crash in the gap destroys a transaction permanently, with the broker believing it was handled.
+
+**2. The event id is the primary key.** Idempotency becomes something the database enforces rather than something the Worker remembers to do. The alternative — check whether the row exists, then insert — has a gap between the check and the insert, and two Workers can both pass the check. A primary key cannot be raced. The insert uses `ON CONFLICT (event_id) DO NOTHING`, which turns a redelivery into a harmless no-op.
+
+New term: **`ON CONFLICT DO NOTHING`** tells PostgreSQL that if the row already exists, succeed quietly and change nothing. `DO UPDATE` would also succeed, but it would modify the existing decision, which FR-018 specifically forbids.
+
+**3. Rejected messages go to a dead-letter queue.** A message the Worker cannot parse is rejected with `requeue=False` into a separate queue where it can be counted and read.
+
+New term: **dead-lettering** is the broker's own mechanism for setting a rejected message aside by republishing it to a nominated exchange, so it ends up in an ordinary queue rather than being destroyed. The alternatives were worse in instructive ways: `requeue=True` redelivers the same unparseable message forever and blocks everything behind it, and "log it and drop it" leaves only a log line, which rotates away.
+
+---
+
+#### Four abstractions turned down, and the one rule that decided each
+
+Principle V says write the direct, concrete solution, and do not abstract until at least three concrete cases need it. It did real work here — each of these is a thing an experienced developer would reach for by reflex:
+
+| Tempting | Rejected because |
+|---|---|
+| **An ORM** (SQLAlchemy) | One table, one insert pattern. An abstraction over a single concrete case. |
+| **A rule registry / plugin system** | There are **two** rules. Principle V's threshold is three. Two functions in a file is the correct shape today, and the moment a third rule makes that genuinely awkward is the moment to revisit. |
+| **A retry library** (`tenacity`) | A dependency for roughly ten lines of loop. |
+| **An HTTP health endpoint** | Adds a web framework and a listening port to a service that otherwise has no network surface, in order to report a fact a file can carry. |
+
+Instead, health is reported by a **heartbeat file**: each service touches a path on every loop iteration, and the Compose healthcheck checks the file is recent. This reports the thing that actually matters — *the loop is still turning* — which is precisely the distinction feature 001's T038 proved matters when it froze PostgreSQL and watched the container stay `running` while the healthcheck correctly turned `unhealthy`. Checking "is the process alive" would have been the false-ready failure all over again.
+
+---
+
+#### Two decisions the spec deliberately left open, now closed
+
+**Where unprocessable messages go:** a dead-letter queue, as above. The constitution permitted either rejection or dead-lettering; dead-lettering wins because FR-029 requires the count to be *observable*, and a dead-letter queue gives that for free — `rabbitmqctl list_queues` shows the depth and the management interface shows the payloads.
+
+**How velocity history is read:** a `SELECT count(*)` against the decisions table, in the same transaction as the insert, with an index on `(account_id, occurred_at)`.
+
+The reason the spec banned in-memory history is worth restating because it is the kind of bug that would survive for months: memory dies with the process, so the same transaction would get a *different verdict* depending on how recently the Worker restarted, and two Workers would disagree with each other. **A decision that depends on uptime is not a decision.** Reading from the database costs one query per message and makes the answer deterministic everywhere.
+
+The accepted cost: only *decided* transactions are counted, so events still in flight do not contribute, and the count can undercount slightly. It is deterministic, which is what the requirement actually asks for. *Revisit when* throughput rises enough that in-flight events become a large fraction of a window.
+
+---
+
+#### Boundaries, written down because otherwise they get invented
+
+The first draft of the spec said nothing about a transaction exactly at a threshold. Two implementers would pick `>` and `>=` and both be certain they were right. So the rules contract fixes both:
+
+- **Amount**: flagged when `amount > threshold`, strictly. Exactly at the threshold is **not** flagged.
+- **Velocity**: the transaction being decided **counts toward its own total** (`prior + 1 >= count`), so with a threshold of 4, three priors plus this one flags. The window is **half-open**: a prior transaction exactly `window` seconds old falls outside and is not counted.
+
+Related, and the kind of detail that produces an unreproducible bug: **the amount crosses the wire as a string, not a JSON number.** JSON numbers are binary floating point in most parsers, where `0.1 + 0.2 != 0.3`. A threshold comparison at exactly the boundary is the single place that error would surface — as a wrong verdict that cannot be reproduced reliably. String on the wire, `Decimal` in Python, `numeric(12,2)` in PostgreSQL: exact decimal the whole way.
+
+---
+
+#### A rule from feature 001 deliberately broken
+
+Feature 001 wrote "no profiles" into its own Compose file header. This plan adds a third Compose entry, `tests`, carrying `profiles: ["test"]`.
+
+The reasoning: FR-032 requires an integration test against the real broker and real database, and FR-026 forbids requiring anything on the host — so the test must run in a container. A plain service would start on every `docker compose up`, which is wrong for something that runs once and exits. Profiles are the mechanism Compose provides for exactly that.
+
+Alternatives and why they lost: baking `pytest` into the Worker image puts test-only dependencies into a runtime image; a second Compose file breaks the stronger "exactly one Compose file" rule and splits the environment definition into two places that drift; running `pytest` on the host violates FR-026 outright.
+
+It is recorded in plan.md's Complexity Tracking, and the Compose header comment will be corrected in the same change so the file does not contradict itself. Feature 001's rule was a statement about its own scope — it had nothing to put behind a profile — not a constitutional ban.
+
+**On why the integration test may not mock anything:** the failures this feature must not have — acknowledging before committing, a duplicate row, a poison message blocking a queue — are all failures of the *interaction* between a service and its dependencies. A mock is built from the same assumptions as the code it tests, so it agrees with the code and proves nothing. Feature 001 is the evidence: four of its five surprises came from a dependency behaving differently than assumed, and no mock would have caught any of them.
+
+---
+
+#### Something the design work surfaced that the gate check missed
+
+The conventional way to create a database schema in Docker is to drop SQL files into the postgres image's `/docker-entrypoint-initdb.d`. It is unusable here, for two independent reasons, and the second is the dangerous one:
+
+1. It requires mounting a directory into the `postgres` service — which FR-023 forbids, because adding these services must not change feature 001's definitions.
+2. **Those scripts run only when the data directory is first initialised.** On a fresh clone it would work. On the volume that already exists on this machine it would silently do nothing. A setup step that works for new developers and quietly fails for existing ones is worse than one that fails for everybody.
+
+So migrations are numbered `.sql` files applied by the Worker at startup, tracked in a `schema_migrations` table, under a PostgreSQL advisory lock.
+
+New term: an **advisory lock** is a lock the application asks PostgreSQL to hold on an arbitrary number. It locks no table; it only guarantees one holder at a time. It is what makes migration safe if two Workers start simultaneously, without inventing any coordination of our own.
+
+The Worker owns migrations because it is the only service that touches the database, which removes the race entirely rather than managing it.
+
+---
+
+#### Accepted risks, with the condition for revisiting each
+
+Recorded in plan.md and repeated here, because the constitution requires risks to carry their revisit condition rather than leaving it implicit:
+
+1. **Queue arguments are immutable in RabbitMQ.** The dead-letter configuration must be right the first time the queue is created; changing it later needs the queue deleted. A half-finished implementation that creates `transactions` without the argument will make the correct implementation fail with `PRECONDITION_FAILED` — an error that looks nothing like its cause. *Revisit when:* the topology must change, at which point the migration path gets written down rather than improvised. The quickstart carries the recovery command.
+2. **A single synchronous Worker must reach 50 events/second** — a 20 ms budget per message for one `SELECT` plus one `INSERT`. This is the most likely thing to fail. *Revisit when:* measurement shows it falls short. The fix is a larger prefetch with batched commits, or several Workers (safe, because of the primary key) — **not** relaxing the criterion.
+3. **Velocity undercounts in-flight events.** As above.
+4. **`pika`'s blocking connection services heartbeats on the calling thread**, so a long database stall drops the AMQP connection and surfaces as a confusing `StreamLostError` rather than a database error. Mitigated by prefetch 1, a generous heartbeat, and the reconnect loop. *Revisit when:* reconnect churn shows up in logs under normal load.
+
+---
+
+#### What does NOT exist
+
+- **No code.** Not one line. Three directories are described in the plan and none exists on disk.
+- **No tasks list.** `/speckit-tasks` is next, and that is what turns this plan into ordered, checkable work.
+- Nothing in the running environment has changed. `docker-compose.yml` is untouched; it still defines two services, and the pipeline it describes is entirely on paper.
+
+**State:** feature 001 complete and verified. Feature 002 specified and planned; implementation not started. Next step is `/speckit-tasks`.
 
 ### 2026-10-31 (later) — Feature 002 is specified: the first stage that actually does something
 
