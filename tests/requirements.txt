@@ -1,0 +1,3 @@
+pytest==9.2.0
+pika==1.4.4
+psycopg[binary]==3.3.6
