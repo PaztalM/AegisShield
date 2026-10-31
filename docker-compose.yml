@@ -1,8 +1,15 @@
 # AegisShield — local development environment.
 #
-# Exactly one Compose file: no version key, no override file, no profiles,
-# no include, and no container_name on any service. Every credential, name,
-# and host port is interpolated from .env (see .env.example).
+# Exactly one Compose file: no version key, no override file, no include,
+# and no container_name on any service. Every credential, name, and host
+# port is interpolated from .env (see .env.example).
+#
+# Exactly one profile exists. The `tests` service carries profiles: ["test"]
+# so a one-shot test runner does not start on every `docker compose up`; it
+# runs via `docker compose run --rm tests`, which activates the profile by
+# itself. Feature 001 wrote "no profiles" here as a statement about its own
+# scope - it had nothing to put behind one - not as a ban. Justified in
+# specs/002-transaction-event-pipeline/plan.md under Complexity Tracking.
 services:
   postgres:
     image: postgres:18.4-alpine
