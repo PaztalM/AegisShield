@@ -56,6 +56,28 @@ services:
     networks:
       - aegisshield-net
     restart: unless-stopped
+  
+  producer:
+    build: ./producer
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER is not set - copy .env.example to .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS is not set - copy .env.example to .env}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:?RABBITMQ_DEFAULT_VHOST is not set - copy .env.example to .env}
+      PRODUCER_RATE_PER_SECOND: ${PRODUCER_RATE_PER_SECOND:-5}
+      PRODUCER_FRAUD_RATIO: ${PRODUCER_FRAUD_RATIO:-0.1}
+      PRODUCER_ACCOUNT_POOL_SIZE: ${PRODUCER_ACCOUNT_POOL_SIZE:-20}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RETRY_MAX_DELAY_SECONDS: ${RETRY_MAX_DELAY_SECONDS:-30}
+      HEARTBEAT_FILE: ${HEARTBEAT_FILE:-/tmp/heartbeat}
+      HEARTBEAT_MAX_AGE_SECONDS: ${HEARTBEAT_MAX_AGE_SECONDS:-30}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - aegisshield-net
+    restart: unless-stopped
+
 
 networks:
   aegisshield-net:
