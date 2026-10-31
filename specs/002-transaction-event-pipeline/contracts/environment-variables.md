@@ -53,7 +53,7 @@ Note the services use the **internal** ports `5672` and `5432`, not `RABBITMQ_PO
 
 | Variable | Tier | Default | Purpose |
 |---|---|---|---|
-| `FRAUD_AMOUNT_THRESHOLD` | defaulted | `5000.00` | Amount above which a transaction is flagged, strictly greater. See [fraud-rules.md](./fraud-rules.md). |
+| `FRAUD_AMOUNT_THRESHOLD` | defaulted | `5000.00` | Amount above which a transaction is flagged, strictly greater. See [fraud-rules.md](./fraud-rules.md). **Read by the worker *and the producer*** — corrected 2026-10-31. This section is headed “Worker — rules” and the variable was originally given to the Worker only, but the Producer must know the threshold to generate amounts above it, which is what FR-005 requires. The alternative — hard-coding a large amount in the generator — would silently stop producing flagged transactions the moment anyone raised the threshold, defeating both FR-005 and SC-012. Found while writing T018; the contradiction was between this table and fraud-rules.md's own prose, which already said the Producer uses it. |
 | `FRAUD_VELOCITY_COUNT` | defaulted | `4` | Transactions on one account within the window needed to flag, counting the current one. |
 | `FRAUD_VELOCITY_WINDOW_SECONDS` | defaulted | `60` | Length of the velocity window. |
 
