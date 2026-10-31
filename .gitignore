@@ -14,3 +14,14 @@ __pycache__/
 
 # Docker volumes/data (if mapped locally outside of Docker managed volumes)
 data/
+
+# Assistant and workflow-tool configuration - local only, never published.
+# These are scaffolding for how the work gets done, not the work itself.
+# The one exception is the project constitution, which is our own governing
+# document and is referenced throughout the specs, so it stays tracked.
+CLAUDE.md
+.claude/
+.specify/*
+!.specify/memory/
+.specify/memory/*
+!.specify/memory/constitution.md

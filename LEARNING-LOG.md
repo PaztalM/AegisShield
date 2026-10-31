@@ -2264,7 +2264,7 @@ This is a pattern worth copying: **when you can't fully test a requirement, test
 **Rejected alternatives:**
 
 - *Put the rule in `README.md`.* Rejected — the README is for operators who want to run the thing. A rule that governs how work is done belongs with the other rules governing how work is done, where every plan's Constitution Check will test it.
-- *Put it in `CLAUDE.md` or a memory file.* Rejected — those are assistant-facing configuration. This is a project standard and should hold regardless of who or what is doing the work.
+- *Put it in local tool configuration.* Rejected — that kind of file is machine-specific and unpublished. This is a project standard and should hold regardless of who or what is doing the work, so it belongs somewhere permanent and visible.
 - *Make it a workflow gate only, not a principle.* Rejected — principles get checked explicitly in every plan's Constitution Check table. A gate buried in a list is easier to skip. Making it a principle gives it teeth.
 - *Write a separate explainer per feature.* Rejected — you'd have to hunt across directories to reconstruct the story, and cross-feature context (why the constitution says what it says) would have nowhere to live. One running log, newest entry first.
 
