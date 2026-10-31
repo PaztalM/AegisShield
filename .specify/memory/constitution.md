@@ -110,6 +110,60 @@ project. It is absent from the code, absent from the diff, and gone from memory 
 Recording it in plain language is what makes the difference between maintaining a system and
 merely possessing it — and between engineering a system and having prompted one into existence.
 
+### VII. The Repository Boundary, and Deletion by Permission Only
+
+This folder is the whole working area. Nothing outside it is in scope, and nothing inside it is
+deleted without being asked for.
+
+- **No command may read, create, modify, or delete any file outside this project folder.** Not the
+  user's home directory, not other repositories, not system directories, not global git
+  configuration — and this includes read-only inspection. If something outside is genuinely needed,
+  it is requested, not fetched.
+
+- **Two exceptions, both narrow, both named here so they cannot quietly widen:**
+  1. **The session's own temporary scratch directory**, for throwaway working files that must not
+     pollute this repository — scratch SQL, long commit messages, disposable test scaffolding.
+     Nothing written there is ever a deliverable, and nothing there is ever read back as a source
+     of truth.
+  2. **An assistant memory or configuration file**, and only to record a preference the owner has
+     explicitly asked to persist beyond the current session. Writing one MUST be stated plainly at
+     the time it happens, with the path.
+
+  Any other access outside this folder is a violation, however convenient.
+
+- **Deleting or overwriting any file inside this folder requires explicit permission for that
+  specific path, asked for before the command runs.** Permission to commit is not permission to
+  delete. Permission for one path is not permission for another. Permission once is not permission
+  thereafter.
+
+- **Before any destructive operation, what it will affect MUST be listed and shown — not
+  described.** A command counts as destructive if it *can* remove or overwrite a file, whether or
+  not that is its stated purpose. `git filter-branch`, `git clean`, `git reset --hard`,
+  `git checkout --`, `git restore`, `rm`, `mv`, and any force-push all count. Where a dry-run flag
+  exists, the dry run goes first and its output is shown.
+
+- **A command whose destructive reach is not fully understood MUST NOT be run.** "I believe this
+  only touches the index" is not knowledge. Establish it, or do not run it.
+
+- **Rewriting git history requires permission for that specific operation**, and before it runs,
+  every file that exists on disk but is not tracked by git MUST be copied somewhere outside this
+  folder. A git backup ref is not sufficient, because the files at risk are precisely the ones git
+  is not tracking.
+
+Rationale: this principle was not written in the abstract. On 2026-10-31, `git filter-branch` was
+run to remove a set of paths from history. Those paths had already been untracked and were expected
+to simply remain on disk as ignored files; the assumption was that since `git reset --hard` leaves
+ignored files alone, `filter-branch` would too. It does not — its working-tree cleanup deleted all
+thirty of them, and the project's workflow tooling was silently broken for twenty minutes before an
+audit caught it. They were recoverable only because an unrelated backup ref happened to still hold
+them.
+
+Two things were wrong, and only one was the command. The first was running an operation whose full
+effect was not known. The second was that a file's safety was inferred from a *different* command's
+behaviour. Both are avoided by the rules above: list what will be touched, back up what git cannot
+see, and ask before deleting. The cost of asking is one sentence; the cost of not asking is work
+that no longer exists.
+
 ## Technology Stack & Constraints
 
 - **Language**: Python 3 for all application services. The exact minor version is pinned once in
@@ -130,7 +184,7 @@ constitution amendment.
 ## Development Workflow & Quality Gates
 
 - Every feature follows the Spec Kit flow: specify → plan → tasks → implement. The plan MUST
-  include a Constitution Check against Principles I–VI before implementation begins.
+  include a Constitution Check against Principles I–VII before implementation begins.
 - No unit of work is complete until `LEARNING-LOG.md` has been updated for it (Principle VI). This
   applies to documentation-only work, including specs, plans, and task lists.
 - Fraud-detection rules MUST have unit tests covering both flagged and non-flagged cases.
@@ -156,9 +210,17 @@ constitution amendment.
   MUST be recorded with justification in the plan's Complexity Tracking section, or the change
   is rejected.
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-23
+**Version**: 1.2.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-31
 
 **Amendment history**:
+
+- **1.2.0** (2026-10-31) — Added Principle VII (The Repository Boundary, and Deletion by Permission
+  Only), after `git filter-branch` deleted thirty untracked-but-on-disk files from the working tree
+  during a history rewrite and broke the project's workflow tooling unnoticed. MINOR bump: a new
+  principle was added; no existing principle was changed or removed. Migration impact: none on
+  services; the Constitution Check table in every plan now carries a seventh row, and any future
+  deletion or history rewrite needs the owner's explicit permission for the specific path plus an
+  out-of-folder backup of untracked files.
 
 - **1.1.0** (2026-10-23) — Added Principle VI (Explain the Work in Plain Language) and the
   corresponding workflow gate, requiring `LEARNING-LOG.md` to be updated with every unit of work.

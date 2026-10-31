@@ -6,7 +6,7 @@ Last updated: 2026-10-31
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified, planned, broken into 62 ordered tasks, cross-checked and fully remediated — still no code exists**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
+> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified, planned, broken into 62 ordered tasks, cross-checked, fully remediated, and 10 tasks into implementation — the database table and the migration runner exist and are verified, but neither service has a program yet**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
 
 ---
 
@@ -402,6 +402,45 @@ The rest of the file pins the stack (Python 3, RabbitMQ, PostgreSQL, Compose), r
 Versioning a *document* like this may look over-formal, but it means "we're on constitution 1.1.0" is a precise statement, and a future reader of an old plan knows which rules applied at the time.
 
 ---
+
+### Principle VI — Explain the Work in Plain Language
+
+> Keep one running log at `LEARNING-LOG.md`. Update it with every unit of work. Cover what was done,
+> why, what was rejected, and what state the project is in. Assume no prior knowledge; define every
+> term at first use. State plainly what does NOT yet exist. Record accepted risks with the condition
+> for revisiting them.
+
+This is the principle that produced the file you are reading. Two parts of it do the most work.
+
+**"State plainly what does NOT yet exist."** Planning output reads exactly like a working system if
+nobody says otherwise. Every entry therefore ends with what is still missing — which is why entry
+after entry says *no code exists yet* rather than letting a detailed design imply a running pipeline.
+
+**"Record accepted risks with the condition for revisiting them."** A risk noted without a trigger is
+just a worry. "A single Worker must reach 50 events/second" is not useful on its own; "revisit when
+measurement shows it falls short, and the fix is batching or more Workers, not a looser target" is.
+
+It also has teeth the others do not: no unit of work is complete until this file is updated for it,
+including documentation-only work. That is why a spec, a plan and a task list each got an entry
+before a single line of code existed.
+
+### Principle VII — The Repository Boundary, and Deletion by Permission Only
+
+**Added 2026-10-31, constitution 1.2.0.** Nothing outside the AegisShield folder is read, written or
+deleted. Nothing inside it is deleted without permission for that exact path, asked for first. Before
+anything destructive runs, what it will touch is listed and shown rather than described. And a
+command whose full effect is not known does not get run.
+
+The definition that does the real work: **a command counts as destructive if it CAN remove or
+overwrite a file, whether or not that is its purpose.** `git filter-branch` is not a delete command
+by name or by documentation, and it deleted thirty files.
+
+Why it exists: see the 2026-10-31 entry on `git filter-branch` in the log below. In short, a history
+rewrite removed files from the working folder that were expected to survive, because safety was
+inferred from how a *different* git command behaves. The principle also requires that any future
+history rewrite first copies every untracked-but-present file somewhere outside the folder - because
+a git backup can only hold what git was tracking, and the files at risk are exactly the ones it is
+not.
 
 ## 6. The first feature: local Docker infrastructure
 
@@ -855,6 +894,104 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-31 (final, and the most expensive lesson so far) — `git filter-branch` deletes files from your working folder, and Principle VII exists because of it
+
+**What:** A set of paths was removed from the repository's git history with `git filter-branch`. Those paths had already been untracked and were expected to stay on disk as ignored files. Thirty of them were deleted outright, and the project's workflow tooling stopped working for about twenty minutes before an audit noticed. They were recoverable only by luck. The constitution gained **Principle VII** in response.
+
+---
+
+#### The three ideas you need first
+
+**Tracked and untracked.** Git does not watch every file in a folder. It watches the ones you have told it to — those are **tracked**. Everything else is **untracked**: git knows the file is there but takes no responsibility for it.
+
+**Ignored.** A file listed in `.gitignore` is untracked *and* git stops mentioning it. It sits in your folder, works normally, and is invisible to git. This is normal and useful: local settings, downloaded libraries, anything machine-specific.
+
+**The working folder versus history.** Two different things that are easy to conflate. The **working folder** is the files you can actually open right now. **History** is the sequence of saved snapshots git keeps. A file can be in one and not the other — and that gap is the whole story here.
+
+---
+
+#### What was supposed to happen
+
+Some files were made untracked: git stopped recording them, and they stayed on disk as ignored files. Normal, routine, and exactly as expected.
+
+But they were still sitting in older snapshots. Git history keeps everything — removing a file from today's snapshot does not remove it from yesterday's. So anyone scrolling back through the history would still find them.
+
+Removing a file from *every* snapshot means **rewriting history**: rebuilding every saved snapshot without that file. `git filter-branch` does this.
+
+---
+
+#### What actually happened
+
+The rewrite worked. Every snapshot was rebuilt without those paths, and the history was clean.
+
+Then `filter-branch` finished by tidying up the working folder to match the newly-rewritten history. The rewritten history has no knowledge of those thirty files. So it removed them.
+
+Not from history — they were already gone from there, intentionally. **From the actual folder.** They stopped existing.
+
+---
+
+#### The specific mistake, which is the part worth keeping
+
+The reasoning that led here was:
+
+> `git reset --hard` — the everyday "throw away my changes" command — famously leaves ignored files alone. It only resets what git tracks. So `filter-branch` will too.
+
+That is a perfectly sensible inference and it is wrong. These are different commands with different cleanup behaviour. One of them respects the line between tracked and ignored; the other does not.
+
+**The lesson is not "filter-branch is dangerous."** It is narrower and more useful:
+
+> **A command's safety cannot be inferred from a different command's behaviour, however similar they look.**
+
+This is the same mistake this project has now made in several costumes. The restart policy that was assumed to fire on a kill, and did not. The Python version that was assumed to lack prebuilt packages, and did not. The index that was assumed to help, and did — but by 428x rather than "a bit". Every one of them was a confident claim about how a tool behaves, and every one was settled in seconds by running something.
+
+Here the cost was higher than usual, because the thing being reasoned about was **whether files would continue to exist**. A wrong guess about performance costs a measurement. A wrong guess about deletion costs the files.
+
+---
+
+#### Why it was recoverable, which was partly luck
+
+`git filter-branch` leaves a backup reference to the pre-rewrite history, and an earlier backup tag happened to still contain the files as *tracked* content from before they were untracked. Restoring them was one command.
+
+That backup was not luck exactly — it was kept deliberately. But it worked for a reason nobody planned: it was made for a *different* rewrite, and it happened to pre-date the untracking. Had the untracking come first and the backup second, the backup would have contained no copy of those files either, because by then git was not watching them.
+
+New term worth having: a **reference** (or **ref**) is a name pointing at one snapshot — a branch and a tag are both refs. A backup ref is just a name pinned to the snapshot you had before you changed things, so you can find your way back.
+
+**The flaw in relying on it:** a git backup only contains what git was tracking. **The files most at risk during a history rewrite are precisely the ones git is not tracking** — so a git backup is exactly the wrong tool for protecting them. They have to be copied somewhere outside the folder.
+
+---
+
+#### Principle VII, in plain words
+
+The constitution went from 1.1.0 to 1.2.0 (a MINOR bump — a new principle added, nothing existing changed). It says four things:
+
+| Rule | Why |
+|---|---|
+| Nothing outside this project folder gets read, written, or deleted | The blast radius of any mistake is then bounded by one folder |
+| Deleting anything inside the folder needs permission for that exact path, asked first | Permission to commit is not permission to delete, and permission once is not permission forever |
+| Before anything destructive runs, show what it will touch — don't describe it | Describing is where the wrong assumption hides. A list is checkable. |
+| A command whose full effect is not known does not get run | "I believe this only touches the index" is not knowledge |
+
+And one rule aimed squarely at this incident: **a history rewrite requires copying every untracked-but-present file somewhere outside the folder first**, because a git backup provably cannot protect them.
+
+There is a definition of *destructive* in there that matters more than the list: **a command is destructive if it CAN remove or overwrite a file, whether or not that is its purpose.** `git filter-branch` is not a delete command. Its name says nothing about deletion, its documentation is about rewriting history, and it deleted thirty files. Judging a command by its stated purpose is how this happened.
+
+---
+
+#### What this cost, honestly
+
+Twenty minutes, and only because a full audit ran shortly after. Nothing of the system itself was lost — no code, no specs, no documents, no history. The missing files were development tooling, all recoverable.
+
+The reason it goes in this log anyway is that the margin was thin and accidental. The same command, run an hour later in the project's life, would have taken files that no backup held.
+
+---
+
+#### What does NOT exist
+
+- **No application logic yet.** The schema and the migration runner exist and are verified. Neither service has a program yet; `producer.py` and `worker.py` arrive in T018 and T021.
+- Nothing in the pipeline runs. `docker-compose.yml` still defines two services.
+
+**State:** feature 001 complete. Feature 002 at 10 of 62 tasks — Phase 1 done, Phase 2 two tasks in. The constitution is at 1.2.0 with seven principles, and every future plan's Constitution Check now carries a seventh row.
 
 ### 2026-10-31 (final) — Fixing the remaining findings turned up two more, and one of them was a way to jam the whole pipeline with a single valid message
 
