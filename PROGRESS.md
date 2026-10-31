@@ -16,7 +16,9 @@ There are three documents in this project and they do different jobs:
 
 **Stage 1 is finished.** The project has a working local development environment: a message queue and a database that start with one command on your own computer.
 
-**There is no application code yet.** Nothing detects fraud yet. Stage 1 built the foundation that the actual program will run on top of.
+**Stage 2 is planned but not built.** We have written down exactly what the next piece should do — the two programs that will actually generate transactions and check them for fraud — but none of it is written yet.
+
+**There is no application code yet.** Nothing detects fraud yet. Stage 1 built the foundation; Stage 2 will build the first thing that runs on it.
 
 ---
 
@@ -110,6 +112,35 @@ Worth recording, because these are the useful parts:
 3. **One of our own review findings was wrong.** An automated review tool concluded, with confident reasoning, that killing a container would make it restart itself. We wrote that into three documents. Then we actually ran it and the containers stayed dead. Lesson: reading code and reasoning about it finds contradictions between documents very well, but it cannot establish facts about how other software behaves. Only running it can do that.
 
 4. **Our test scripts were wrong more often than the thing being tested.** Four separate times a test reported a failure that turned out to be a bug in the test. Lesson: a test that cries wolf is as much of a problem as a test that misses a real fault.
+
+---
+
+## Stage 2 — The transaction pipeline
+
+**Status: specified, not built.** Started 31 October 2026.
+
+### In one sentence
+
+Two programs: one invents card transactions, the other checks each one for fraud and saves the verdict — so a transaction can travel the whole path from start to stored decision.
+
+### Where it has got to
+
+So far this stage has produced **a written specification only**. That is a document describing what the thing must do and how we will know it works, with no code. The project deliberately works in that order: describe, plan, break into tasks, then build.
+
+The specification sets out 33 requirements, four user stories in priority order, and twelve measurable targets — for example, every transaction must end up with exactly one saved decision, and 95% of them must get from created to saved in under two seconds.
+
+### The three decisions worth knowing about
+
+**We are building both programs at once, not one then the other.** Building only the generator would mean nothing reads the messages, so they would just pile up. Building only the checker would mean publishing messages by hand to test it. Neither proves the parts actually connect, and connecting things is where this kind of system usually breaks. So we are building a thin version of the whole path instead: one kind of transaction, two fraud rules, one results table. Shallow, but complete end to end.
+
+**The transactions will be made up, not real.** The generator invents plausible transactions on a timer, and can be told to make some of them obviously fraudulent so you can watch the rules catch them. The alternative was a real public dataset of card fraud, which would be more realistic but has to be found, copied into the project, and then its format dictates everything else. Made-up data has no outside dependency and can be dialled up or down.
+
+**The fraud rules are placeholders.** Two simple ones: an amount over a limit, and too many transactions on one card in a short time. These exist to prove the pipeline carries decisions correctly. Real fraud detection is a later problem.
+
+### What does NOT exist yet
+
+- **No code at all.** Not one line. No programs, no database tables, no tests.
+- **No plan or task list yet** — those are the next two steps before any code gets written.
 
 ---
 

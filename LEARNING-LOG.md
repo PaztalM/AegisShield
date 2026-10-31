@@ -6,7 +6,7 @@ Last updated: 2026-10-23
 
 This file assumes you know nothing in advance. Every term gets defined the first time it shows up. It is written to be read top to bottom, but you can jump to any section.
 
-> **The single most important thing to understand right now:** feature 001 is **complete** — 45 of 45 tasks. One command brings up a healthy RabbitMQ and a healthy PostgreSQL (45.1s cold, 14.2s warm), the broker's web interface is published, data provably survives a restart, and `down -v` provably discards it. **There is still no application code** — no Producer, no Worker, no schema, no automated tests. The 2026-10-31 implementation entry explains the whole thing line by line and states plainly what does not exist. One operational gotcha: after a failed start, run `docker compose down` before retrying, or you can get a service reported healthy that your host cannot reach.
+> **The single most important thing to understand right now:** feature 001 (the local environment) is **complete** — 45 of 45 tasks, one command brings up a healthy RabbitMQ and PostgreSQL. Feature 002 (the Producer and Worker that will actually detect fraud) is **specified only — no code exists yet**. So there is a verified foundation and nothing running on top of it. Read the 2026-10-31 entries newest first: the feature 002 spec entry, then the feature 001 implementation entry, which explains the finished environment line by line.
 
 ---
 
@@ -853,6 +853,93 @@ Alphabetical, for when a term shows up and you've forgotten it.
 ## Entry log
 
 Newest first. Each entry is one unit of work, as Principle VI requires.
+
+### 2026-10-31 (later) — Feature 002 is specified: the first stage that actually does something
+
+**What:** Wrote the specification for **002-transaction-event-pipeline**. No code yet — this is the "what and why" document that planning and implementation will work from. Feature 001 built the room; this describes the machine that goes in it.
+
+**The feature in one sentence:** a **Producer** that invents transaction events and a **Worker** that examines each one for fraud and records the verdict, so that a transaction can travel the whole path Producer → RabbitMQ → Worker → PostgreSQL and come out the other end as a stored decision.
+
+---
+
+#### Why both services at once, instead of one at a time
+
+This was the first real decision and it went against the instinct to keep each stage as small as possible.
+
+Doing the Producer alone would have been smaller. But nothing would consume what it produced: messages would pile up in a queue, the only way to see anything working would be to stare at the management interface, and the constitution's requirement for an integration test across the full path still could not be written — because half the path would not exist.
+
+Doing the Worker alone has the mirror problem: you have to hand-publish messages to test it, so the real path is still unproven.
+
+So: **both, deliberately thin.** One event type, two rules, one decision record. The slice is end-to-end but shallow. The reason to prefer this shape is that an end-to-end slice proves the connections work, and connections are where this kind of system actually fails — a service that cannot reach the broker, a message nobody can parse, a decision written twice. Depth is cheap to add later; a wrong connection is expensive to find later.
+
+New term: a **thin vertical slice** is a feature that goes all the way through a system end to end while doing as little as possible at each layer. The opposite approach — build one layer completely, then the next — leaves the risky part, the joins between layers, untested until the end.
+
+**Rejected: a public fraud dataset or a file of sample transactions**, in favour of synthetic generated events. A real dataset would give realistic data and genuine fraud labels, but it has to be found, vendored into the repository, and its format then dictates the message contract. Generated events have no external dependency, run forever, and can be dialled to produce obviously-fraudulent transactions on demand so the rules are visibly working. The cost is that the "fraud detection" is demonstrably fake at this stage, which is acceptable because the rules are placeholders for a pipeline, not a product.
+
+**Rejected: an HTTP endpoint for ingesting transactions.** More realistic as a front door, but it adds a web framework, a port, and something that has to call it — machinery for a requirement nobody has yet (Principle V).
+
+---
+
+#### What the specification demands, and the parts that matter most
+
+Thirty-three requirements, grouped. The interesting ones are not the obvious ones.
+
+**Acknowledge last, not first.** The Worker must tell the broker "I have handled this message" **only after** the decision is safely in the database. Get that order wrong and a crash in the gap between the two loses a transaction permanently, with no trace — the broker believes it was handled and throws it away. This is the single most important ordering constraint in the feature.
+
+New term: **acknowledgement** is the consumer telling the broker a message was handled, which is what permits the broker to forget it. Until then the broker keeps it and will deliver it again if the consumer dies.
+
+**Duplicates are a certainty, not a risk.** A broker's realistic guarantee is *at-least-once* delivery: if it is unsure whether a consumer handled something, it sends it again. So the same transaction will arrive twice, and the system must produce one decision, not two.
+
+New term: **idempotent** means doing something twice has the same effect as doing it once. The spec requires this to be enforced **by the database itself**, through a uniqueness constraint on the transaction identifier, rather than only by the Worker checking first. The difference matters: a check-then-write in the Worker has a gap between the check and the write, and two Workers can both pass the check. A database constraint cannot be talked around.
+
+**Nothing may be dropped silently.** A message that cannot be understood at all must be set aside where a developer can go and look at it, and must not be retried forever in a way that blocks everything behind it. The failure this prevents is the worst kind: a pipeline that looks healthy while quietly discarding what it cannot parse.
+
+**Velocity cannot live in memory.** One of the two fraud rules is a velocity rule — "several transactions on one card in a short window". The obvious implementation keeps recent transactions in the Worker's memory. The spec forbids depending on that, because memory dies with the process: restart the Worker and its idea of recent history silently resets, so the same transaction gets a different verdict depending on when the Worker last restarted. A decision that depends on uptime is not a decision. The recorded default is to derive history from the database, which is already the system's source of truth, at the cost of a read per transaction.
+
+**Boundaries must be decided, not discovered.** The first draft said nothing about a transaction exactly at the amount threshold, or exactly at the edge of the velocity window. That would have failed the spec's own "testable and unambiguous" bar — two people would implement it two ways and both would believe they were right. The spec now requires each boundary outcome to be written down and tested.
+
+**And the debt from feature 001 comes due.** The constitution requires that a service retry a dependency rather than exit when it is not yet available. Feature 001 recorded this as deliberately deferred, because the thing that must retry is an application service and feature 001 shipped none. User Story 3 and FR-021 are where that is paid off. It was logged as deferred rather than silently skipped, which is exactly why it is being picked up now instead of discovered missing in six months.
+
+---
+
+#### Measurable targets, because "real-time" is not a number
+
+The constitution insists that performance targets be stated as numbers in the feature spec rather than assumed globally. So:
+
+| Target | Number |
+|---|---|
+| First stored decision after a cold start | under 60s |
+| Transactions with exactly one decision | 100%, over at least 1,000 |
+| Creation to stored decision | under 2s for 95% |
+| Sustained throughput | at least 50/second for 5 minutes |
+| Duplicate deliveries producing an extra decision | 0, over at least 100 |
+
+These are targets for a thin slice on one laptop, with everything in containers on the same machine. They are not production figures and the specification says so, because a number without its conditions is the kind of thing that gets quoted back years later as a guarantee.
+
+---
+
+#### One deliberate rule-break, recorded rather than hidden
+
+The specification template says to keep implementation details out. This spec names **JSON** in FR-003 and describes **durable queues** and **dead-lettering** in FR-006 and FR-019.
+
+That is deliberate. Those are not free choices being made here — the constitution already fixes the broker, the database, the language, and states that every message payload must be JSON carrying an event ID and a timestamp. Writing those requirements technology-agnostically would pretend to a freedom the project does not have, and would let a plan satisfy the spec while breaking the constitution.
+
+The deviation is limited to constraints the constitution already imposes, and the **Success Criteria section is kept clean** — it can be read by someone who has no idea what the system is built from. The reasoning is written into the quality checklist rather than left for a reviewer to guess at, because an unexplained rule-break looks identical to carelessness.
+
+---
+
+#### What does NOT exist
+
+Stated plainly, because a specification is the easiest artifact in the world to mistake for progress:
+
+- **No code whatsoever.** No Producer, no Worker, no Dockerfiles, no dependency lists, no database tables, no tests. Not one line.
+- **No plan and no task list yet.** `/speckit-plan` and `/speckit-tasks` come next, and the plan is where the Constitution Check happens and where the design decisions this spec deliberately left open get made.
+- **Two decisions deliberately left to the plan**, recorded in the checklist so they are not forgotten: exactly how velocity history is read, and exactly where unprocessable messages are set aside (the constitution permits either rejection or dead-lettering).
+- Everything feature 001 did not build still does not exist. The only thing that changed today is that there is now a written description of what to build next.
+
+**Accepted risk, and when to revisit it:** reading velocity history from the database on every transaction is a read per message. At the 50-per-second target that is fine. If a later feature raises the throughput target substantially, or adds rules that each need their own history query, this is the first thing that will need revisiting — and the trigger to revisit it is a throughput target the Worker cannot meet, not a vague sense that a query per message feels wasteful.
+
+**State:** feature 001 complete and verified; feature 002 specified only. Next step is `/speckit-plan`, or `/speckit-clarify` first if any of the assumptions in the spec look wrong on a second reading.
 
 ### 2026-10-31 — Feature 001 is implemented: the whole thing, explained
 
