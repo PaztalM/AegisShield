@@ -74,6 +74,14 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -f "$$HEARTBEAT_FILE" && test $$(( $$(date +%s) - $$(stat -c %Y "$$HEARTBEAT_FILE") )) -lt "$$HEARTBEAT_MAX_AGE_SECONDS"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s        
     networks:
       - aegisshield-net
     restart: unless-stopped
@@ -101,6 +109,14 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -f "$$HEARTBEAT_FILE" && test $$(( $$(date +%s) - $$(stat -c %Y "$$HEARTBEAT_FILE") )) -lt "$$HEARTBEAT_MAX_AGE_SECONDS"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s        
     networks:
       - aegisshield-net
     restart: unless-stopped
